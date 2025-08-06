@@ -22,45 +22,60 @@ async function initializeDashboard() {
     }
 }
 
-function loadMeetings() {
-    return new Promise((resolve, reject) => {
-        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-            // Use basic getMeetings call (works with both enhanced and legacy storage)
-            chrome.runtime.sendMessage({ action: 'getMeetings' }, (response) => {
-                if (chrome.runtime.lastError) {
-                    const errorMsg = chrome.runtime.lastError.message || JSON.stringify(chrome.runtime.lastError);
-                    console.error('Storage error:', errorMsg);
-                    console.warn('Falling back to mock data due to storage error');
-                    
-                    // Use mock data as fallback
-                    allMeetings = generateMockData();
-                    filteredMeetings = [...allMeetings];
-                    console.log(`Loaded ${allMeetings.length} mock meetings due to storage error.`);
-                    resolve();
-                    return;
-                }
-                
-                // Check if response is valid
-                if (!response || !Array.isArray(response)) {
-                    console.warn('Invalid response from storage, using empty array:', response);
-                    allMeetings = [];
-                    filteredMeetings = [];
-                } else {
-                    allMeetings = response;
-                    filteredMeetings = [...allMeetings];
-                }
-                
-                console.log(`Loaded ${allMeetings.length} meetings from storage.`);
-                resolve();
+async function loadMeetings() {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        try {
+            console.log('📡 Dashboard: Requesting meetings from background script...');
+            
+            // Use async/await with Promise wrapper for proper error handling
+            const response = await new Promise((resolve, reject) => {
+                chrome.runtime.sendMessage({ action: 'getMeetings' }, (response) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                    } else {
+                        resolve(response);
+                    }
+                });
             });
-        } else {
-            console.warn('Chrome extension APIs not available. Using mock data for development.');
-            // Mock data for development outside of the extension environment
+            
+            console.log('📥 Dashboard: Received response:', response);
+            
+            // Check if response is valid
+            if (!response || (response.error && response.error.includes('Storage not initialized'))) {
+                console.warn('⚠️ Storage not initialized, using mock data');
+                allMeetings = generateMockData();
+                filteredMeetings = [...allMeetings];
+            } else if (response.error) {
+                console.error('❌ Storage error:', response.error);
+                console.warn('⚠️ Falling back to mock data due to storage error');
+                allMeetings = generateMockData();
+                filteredMeetings = [...allMeetings];
+            } else if (!Array.isArray(response)) {
+                console.warn('⚠️ Invalid response from storage, using empty array:', response);
+                allMeetings = [];
+                filteredMeetings = [];
+            } else {
+                allMeetings = response;
+                filteredMeetings = [...allMeetings];
+                console.log(`✅ Successfully loaded ${allMeetings.length} meetings from storage.`);
+            }
+            
+        } catch (error) {
+            const errorMsg = error.message || JSON.stringify(error);
+            console.error('❌ Dashboard: Error loading meetings:', errorMsg);
+            console.warn('⚠️ Falling back to mock data due to communication error');
+            
+            // Use mock data as fallback
             allMeetings = generateMockData();
             filteredMeetings = [...allMeetings];
-            resolve();
+            console.log(`📝 Loaded ${allMeetings.length} mock meetings due to error.`);
         }
-    });
+    } else {
+        console.warn('⚠️ Chrome extension APIs not available. Using mock data for development.');
+        // Mock data for development outside of the extension environment
+        allMeetings = generateMockData();
+        filteredMeetings = [...allMeetings];
+    }
 }
 
 function initializeFilters() {
@@ -957,13 +972,30 @@ function exportData() {
     URL.revokeObjectURL(url);
 }
 
-function clearAllData() {
+async function clearAllData() {
     if (confirm('Are you sure you want to clear ALL meeting data? This is irreversible.')) {
-        chrome.runtime.sendMessage({ action: 'clearAllData' }, () => {
-            allMeetings = [];
-            applyFilters();
-            alert('All meeting data has been cleared.');
-        });
+        try {
+            const response = await new Promise((resolve, reject) => {
+                chrome.runtime.sendMessage({ action: 'clearAllData' }, (response) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                    } else {
+                        resolve(response);
+                    }
+                });
+            });
+            
+            if (response.error) {
+                alert('Failed to clear data: ' + response.error);
+            } else {
+                allMeetings = [];
+                applyFilters();
+                alert('All meeting data has been cleared.');
+            }
+        } catch (error) {
+            console.error('Error clearing data:', error);
+            alert('Failed to clear data. Please try again.');
+        }
     }
 }
 

@@ -29,6 +29,8 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Handle messages from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log(`📬 Background received message: "${request.action}" from content script`);
+    
     switch (request.action) {
         case 'meetingStarted':
             handleMeetingStarted(request.meeting, sender);
@@ -182,6 +184,8 @@ function getMeetings(sendResponse) {
 
 // Update extension icon
 function updateIcon(state, participants) {
+    console.log(`🎨 Background: Updating icon for state "${state}" with ${participants.length} participants`);
+    
     let iconPath;
     let badgeText = '';
     let badgeColor = '#4285f4'; // Default blue
@@ -198,6 +202,7 @@ function updateIcon(state, participants) {
             badgeText = realParticipants.length.toString();
             badgeColor = '#34a853'; // Green for active
             title = `In meeting with ${badgeText} participant(s)`;
+            console.log(`🟢 Setting ACTIVE icon: badge="${badgeText}", color="${badgeColor}"`);
             break;
         case 'waiting':
             iconPath = {
@@ -208,6 +213,7 @@ function updateIcon(state, participants) {
             badgeText = '...';
             badgeColor = '#f57c00'; // Orange for waiting
             title = 'Waiting in meeting lobby';
+            console.log(`🟠 Setting WAITING icon: badge="${badgeText}", color="${badgeColor}"`);
             break;
         default: // 'none'
             iconPath = {
@@ -216,6 +222,7 @@ function updateIcon(state, participants) {
                 '128': 'icons/icon128.png'
             };
             title = 'Not in a meeting';
+            console.log(`⚪ Setting NONE icon: no badge`);
             break;
     }
     
@@ -228,6 +235,8 @@ function updateIcon(state, participants) {
     
     // Update title
     chrome.action.setTitle({ title });
+    
+    console.log(`✅ Icon updated successfully: state="${state}", title="${title}"`);
 }
 
 // Handle tab updates to manage meeting state

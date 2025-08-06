@@ -12,7 +12,7 @@
     "https://meet.google.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-enhanced.js"
   },
   "content_scripts": [
     {

@@ -55,52 +55,69 @@ class MeetingStorageManager {
 
     // Save a meeting with optimized structure
     async saveMeeting(meeting) {
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['meetings', 'meetingMinutes', 'participants'], 'readwrite');
-            const meetingStore = transaction.objectStore('meetings');
-            const minutesStore = transaction.objectStore('meetingMinutes');
-            const participantStore = transaction.objectStore('participants');
-
-            // Optimize meeting object structure
-            const optimizedMeeting = {
-                ...meeting,
-                date: new Date(meeting.startTime).toISOString().split('T')[0], // Add date index
-                duration: meeting.endTime ? (meeting.endTime - meeting.startTime) : null,
-                participantCount: meeting.participants.length
-            };
-
-            // Remove minutes from main meeting object to reduce size
-            const { minutes, ...meetingWithoutMinutes } = optimizedMeeting;
-            
-            // Save main meeting record
-            meetingStore.put(meetingWithoutMinutes);
-
-            // Save meeting minutes separately for better performance
-            if (minutes && minutes.length > 0) {
-                minutes.forEach(minute => {
-                    minutesStore.put({
-                        meetingId: meeting.id,
-                        timestamp: minute.timestamp,
-                        participants: minute.participants
+        return new Promise(async (resolve, reject) => {
+            try {
+                // First, get existing participant data before starting the transaction
+                const participantUpdates = [];
+                for (const participantName of meeting.participants) {
+                    const existing = await this.getParticipant(participantName);
+                    participantUpdates.push({
+                        name: participantName,
+                        meetingCount: (existing?.meetingCount || 0) + 1,
+                        totalTime: (existing?.totalTime || 0) + (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0),
+                        lastMeeting: meeting.startTime,
+                        meetings: [...(existing?.meetings || []), meeting.id] // Keep all meetings
                     });
-                });
-            }
+                }
+                
+                // Now start the transaction with all data ready
+                const transaction = this.db.transaction(['meetings', 'meetingMinutes', 'participants'], 'readwrite');
+                const meetingStore = transaction.objectStore('meetings');
+                const minutesStore = transaction.objectStore('meetingMinutes');
+                const participantStore = transaction.objectStore('participants');
 
-            // Update participant analytics
-            meeting.participants.forEach(async (participantName) => {
-                const existing = await this.getParticipant(participantName);
-                const participantData = {
-                    name: participantName,
-                    meetingCount: (existing?.meetingCount || 0) + 1,
-                    totalTime: (existing?.totalTime || 0) + (meeting.duration || 0),
-                    lastMeeting: meeting.startTime,
-                    meetings: [...(existing?.meetings || []), meeting.id].slice(-50) // Keep last 50 meetings
+                // Optimize meeting object structure
+                const optimizedMeeting = {
+                    ...meeting,
+                    date: new Date(meeting.startTime).toISOString().split('T')[0], // Add date index
+                    duration: meeting.endTime ? (meeting.endTime - meeting.startTime) : null,
+                    participantCount: meeting.participants.length
                 };
-                participantStore.put(participantData);
-            });
 
-            transaction.oncomplete = () => resolve();
-            transaction.onerror = () => reject(transaction.error);
+                // Remove minutes from main meeting object to reduce size
+                const { minutes, ...meetingWithoutMinutes } = optimizedMeeting;
+                
+                // Save main meeting record
+                meetingStore.put(meetingWithoutMinutes);
+
+                // Save meeting minutes separately for better performance
+                if (minutes && minutes.length > 0) {
+                    minutes.forEach(minute => {
+                        minutesStore.put({
+                            meetingId: meeting.id,
+                            timestamp: minute.timestamp,
+                            participants: minute.participants
+                        });
+                    });
+                }
+
+                // Update participant analytics with pre-computed data
+                participantUpdates.forEach(participantData => {
+                    participantStore.put(participantData);
+                });
+
+                transaction.oncomplete = () => {
+                    console.log('✅ Meeting saved to IndexedDB:', meeting.id);
+                    resolve();
+                };
+                transaction.onerror = () => {
+                    console.error('❌ Error saving meeting to IndexedDB:', transaction.error);
+                    reject(transaction.error);
+                };
+            } catch (error) {
+                console.error('❌ Error preparing meeting data:', error);
+                reject(error);
+            }
         });
     }
 
@@ -182,8 +199,13 @@ class MeetingStorageManager {
         };
     }
 
-    // Cleanup old data with more granular control
+    // Cleanup old data with more granular control - DISABLED TO PRESERVE ALL DATA
     async cleanupOldData(options = {}) {
+        // DISABLED: Return without doing any cleanup to preserve all data
+        console.log('🚫 Data cleanup disabled - preserving all meetings');
+        return { deleted: 0, compressed: 0, message: 'Cleanup disabled to preserve all data' };
+        
+        /* ORIGINAL CODE DISABLED TO PRESERVE DATA:
         const {
             maxAge = 90 * 24 * 60 * 60 * 1000, // 90 days default
             maxMeetings = 1000, // Keep at most 1000 meetings
@@ -218,6 +240,7 @@ class MeetingStorageManager {
         }
 
         return { deleted: toDelete.length, compressed: toCompress.length };
+        */
     }
 
     // Delete a meeting and all associated data
@@ -329,9 +352,7 @@ class MeetingStorageManager {
 
         if (options.includeMinutes) {
             // Include detailed minutes for recent meetings
-            const recentMeetings = meetings
-                .filter(m => m.startTime > (Date.now() - 30 * 24 * 60 * 60 * 1000))
-                .slice(0, 50); // Limit to 50 recent meetings
+            const recentMeetings = meetings; // Export ALL meetings, no limits
                 
             exportData.meetingMinutes = {};
             for (const meeting of recentMeetings) {

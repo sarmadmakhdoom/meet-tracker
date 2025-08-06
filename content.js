@@ -682,12 +682,16 @@
 
     // Update extension icon based on meeting state
     function updateExtensionIcon(state) {
+        console.log(`🔔 Updating extension icon to state: "${state}"`);
         try {
             if (chrome.runtime && chrome.runtime.id) {
+                const participants = getParticipants();
+                console.log(`📨 Sending updateIcon message: state="${state}", participants=[${participants.join(', ')}]`);
+                
                 chrome.runtime.sendMessage({
                     action: 'updateIcon',
                     state: state,
-                    participants: getParticipants()
+                    participants: participants
                 }, (response) => {
                     // Handle potential extension context invalidation
                     if (chrome.runtime.lastError) {
@@ -696,8 +700,12 @@
                             clearInterval(meetingInterval);
                             meetingInterval = null;
                         }
+                    } else {
+                        console.log(`✅ Icon update message sent successfully for state: "${state}"`);
                     }
                 });
+            } else {
+                console.log('⚠️ Chrome runtime not available for icon update');
             }
         } catch (error) {
             console.log('Extension context invalidated, stopping updates:', error.message);

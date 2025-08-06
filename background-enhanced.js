@@ -102,88 +102,99 @@ async function initializeLegacyStorage() {
 }
 
 // Handle messages from content script with enhanced storage
-chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
-    try {
-        switch (request.action) {
-            case 'meetingStarted':
-                await handleMeetingStarted(request.meeting, sender);
-                sendResponse({ success: true });
-                break;
-                
-            case 'meetingUpdate':
-                await handleMeetingUpdate(request.meeting, request.minuteData, sender);
-                sendResponse({ success: true });
-                break;
-                
-            case 'meetingEnded':
-                await handleMeetingEnded(request.meeting, sender);
-                sendResponse({ success: true });
-                break;
-                
-            case 'updateIcon':
-                updateIcon(request.state, request.participants);
-                currentMeetingState.state = request.state;
-                currentMeetingState.participants = request.participants;
-                if (request.state === 'none') {
-                    currentMeetingState.currentMeeting = null;
-                }
-                sendResponse({ success: true });
-                break;
-                
-            case 'getMeetings':
-                const meetings = await getMeetings(request.options);
-                sendResponse(meetings);
-                return true;
-                
-            case 'getCurrentState':
-                sendResponse(currentMeetingState);
-                break;
-                
-            case 'clearAllData':
-                const result = await clearAllData();
-                sendResponse(result);
-                return true;
-                
-            case 'getStorageStats':
-                if (storageManager) {
-                    const stats = await storageManager.getStorageStats();
-                    sendResponse(stats);
-                } else {
-                    sendResponse({ error: 'Storage not initialized' });
-                }
-                return true;
-                
-            case 'exportData':
-                if (storageManager) {
-                    const exportData = await storageManager.exportData(request.options);
-                    sendResponse(exportData);
-                } else {
-                    sendResponse({ error: 'Storage not initialized' });
-                }
-                return true;
-                
-            case 'cleanupOldData':
-                if (storageManager) {
-                    const cleanupResult = await storageManager.cleanupOldData(request.options);
-                    sendResponse(cleanupResult);
-                } else {
-                    sendResponse({ error: 'Storage not initialized' });
-                }
-                return true;
-                
-            case 'importMeetings':
-                if (storageManager) {
-                    const importResult = await importMeetings(request.meetings);
-                    sendResponse(importResult);
-                } else {
-                    sendResponse({ error: 'Enhanced storage not initialized' });
-                }
-                return true;
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    console.log(`📬 Enhanced Background received message: "${request.action}"`);
+    
+    // Handle async operations properly
+    const handleAsync = async () => {
+        try {
+            switch (request.action) {
+                case 'meetingStarted':
+                    await handleMeetingStarted(request.meeting, sender);
+                    return { success: true };
+                    
+                case 'meetingUpdate':
+                    await handleMeetingUpdate(request.meeting, request.minuteData, sender);
+                    return { success: true };
+                    
+                case 'meetingEnded':
+                    await handleMeetingEnded(request.meeting, sender);
+                    return { success: true };
+                    
+                case 'updateIcon':
+                    updateIcon(request.state, request.participants);
+                    currentMeetingState.state = request.state;
+                    currentMeetingState.participants = request.participants;
+                    if (request.state === 'none') {
+                        currentMeetingState.currentMeeting = null;
+                    }
+                    return { success: true };
+                    
+                case 'getMeetings':
+                    console.log('🔍 Getting meetings from IndexedDB...');
+                    const meetings = await getMeetings(request.options);
+                    console.log(`📊 Retrieved ${meetings.length} meetings from storage`);
+                    return meetings;
+                    
+                case 'getCurrentState':
+                    return currentMeetingState;
+                    
+                case 'clearAllData':
+                    const result = await clearAllData();
+                    return result;
+                    
+                case 'getStorageStats':
+                    if (storageManager) {
+                        const stats = await storageManager.getStorageStats();
+                        return stats;
+                    } else {
+                        return { error: 'Storage not initialized' };
+                    }
+                    
+                case 'exportData':
+                    if (storageManager) {
+                        const exportData = await storageManager.exportData(request.options);
+                        return exportData;
+                    } else {
+                        return { error: 'Storage not initialized' };
+                    }
+                    
+                case 'cleanupOldData':
+                    if (storageManager) {
+                        const cleanupResult = await storageManager.cleanupOldData(request.options);
+                        return cleanupResult;
+                    } else {
+                        return { error: 'Storage not initialized' };
+                    }
+                    
+                case 'importMeetings':
+                    if (storageManager) {
+                        const importResult = await importMeetings(request.meetings);
+                        return importResult;
+                    } else {
+                        return { error: 'Enhanced storage not initialized' };
+                    }
+                    
+                default:
+                    return { error: 'Unknown action: ' + request.action };
+            }
+        } catch (error) {
+            console.error('Error handling message:', error);
+            return { error: error.message };
         }
-    } catch (error) {
-        console.error('Error handling message:', error);
+    };
+    
+    // Handle the async operation and send response
+    handleAsync().then(result => {
+        console.log(`✅ Sending response for ${request.action}:`, result);
+        sendResponse(result);
+    }).catch(error => {
+        console.error(`❌ Error in ${request.action}:`, error);
         sendResponse({ error: error.message });
-    }
+    });
+    
+    // Return true to indicate we will respond asynchronously
+    return true;
 });
 
 // Enhanced meeting started handler
@@ -333,8 +344,10 @@ function saveMeetingLegacy(meeting) {
     });
 }
 
-// Update extension icon (unchanged)
+// Update extension icon (with debugging)
 function updateIcon(state, participants) {
+    console.log(`🎨 Enhanced Background: Updating icon for state "${state}" with ${participants.length} participants`);
+    
     let iconPath;
     let badgeText = '';
     let badgeColor = '#4285f4';
@@ -351,6 +364,7 @@ function updateIcon(state, participants) {
             badgeText = realParticipants.length.toString();
             badgeColor = '#34a853';
             title = `In meeting with ${badgeText} participant(s)`;
+            console.log(`🟢 Setting ACTIVE icon: badge="${badgeText}", color="${badgeColor}"`);
             break;
         case 'waiting':
             iconPath = {
@@ -361,6 +375,7 @@ function updateIcon(state, participants) {
             badgeText = '...';
             badgeColor = '#f57c00';
             title = 'Waiting in meeting lobby';
+            console.log(`🟠 Setting WAITING icon: badge="${badgeText}", color="${badgeColor}"`);
             break;
         default:
             iconPath = {
@@ -369,6 +384,7 @@ function updateIcon(state, participants) {
                 '128': 'icons/icon128.png'
             };
             title = 'Not in a meeting';
+            console.log(`⚪ Setting NONE icon: no badge`);
             break;
     }
     
@@ -376,10 +392,16 @@ function updateIcon(state, participants) {
     chrome.action.setBadgeText({ text: badgeText });
     chrome.action.setBadgeBackgroundColor({ color: badgeColor });
     chrome.action.setTitle({ title });
+    
+    console.log(`✅ Enhanced icon updated successfully: state="${state}", title="${title}"`);
 }
 
-// Schedule periodic cleanup
+// Schedule periodic cleanup - DISABLED TO PRESERVE ALL DATA
 function schedulePeriodicCleanup() {
+    // DISABLED: No automatic cleanup to preserve all meetings
+    console.log('🚫 Periodic cleanup disabled - all meetings will be preserved indefinitely');
+    
+    /* ORIGINAL CLEANUP CODE DISABLED:
     // Run cleanup daily
     setInterval(async () => {
         if (storageManager) {
@@ -395,6 +417,7 @@ function schedulePeriodicCleanup() {
             }
         }
     }, 24 * 60 * 60 * 1000); // Every 24 hours
+    */
 }
 
 // Handle tab updates (unchanged)
