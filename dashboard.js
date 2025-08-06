@@ -279,22 +279,38 @@ const getCommonChartOptions = (theme = 'dark') => ({
         foreColor: '#e8eaed'
     },
     grid: {
-        borderColor: '#444'
+        borderColor: '#555',
+        strokeDashArray: 3,
+        xaxis: {
+            lines: { show: true }
+        },
+        yaxis: {
+            lines: { show: true }
+        }
     },
     xaxis: {
         labels: {
-            style: { colors: '#9aa0a6' }
+            style: { colors: '#b8bcc3', fontSize: '12px' }
         },
-        axisBorder: { color: '#444' },
-        axisTicks: { color: '#444' }
+        axisBorder: { color: '#666', show: true },
+        axisTicks: { color: '#666', show: true }
     },
     yaxis: {
         labels: {
-            style: { colors: '#9aa0a6' }
+            style: { colors: '#b8bcc3', fontSize: '12px' }
         }
     },
     tooltip: {
-        theme
+        theme: 'dark',
+        style: {
+            fontSize: '12px'
+        },
+        fillSeriesColor: false
+    },
+    legend: {
+        labels: {
+            colors: '#e8eaed'
+        }
     }
 });
 
@@ -362,10 +378,14 @@ function renderCollaboratorsChart() {
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10);
 
+    // Define bright, distinguishable colors for dark mode
+    const colors = ['#1a73e8', '#ea4335', '#34a853', '#fbbc04', '#9aa0a6', '#ff6d01', '#9c27b0', '#00acc1', '#8bc34a', '#ff5722'];
+
     const options = {
         ...getCommonChartOptions(),
         series: sortedParticipants.map(p => p[1]),
         labels: sortedParticipants.map(p => p[0]),
+        colors: colors,
         chart: { type: 'pie', height: 350 },
         plotOptions: {
             pie: {
@@ -375,11 +395,20 @@ function renderCollaboratorsChart() {
                 }
             }
         },
+        stroke: {
+            show: false
+        },
         legend: { 
             position: 'bottom',
-            horizontalAlign: 'center'
+            horizontalAlign: 'center',
+            labels: {
+                colors: '#e8eaed'
+            }
         },
-        tooltip: { y: { formatter: (val) => `${val} meetings` } },
+        tooltip: { 
+            y: { formatter: (val) => `${val} meetings` },
+            theme: 'dark'
+        },
         dataLabels: {
             enabled: true,
             formatter: function (val, opts) {
@@ -387,7 +416,8 @@ function renderCollaboratorsChart() {
             },
             style: {
                 fontSize: '12px',
-                colors: ['#fff']
+                colors: ['#ffffff'],
+                fontWeight: 'bold'
             }
         }
     };
@@ -429,13 +459,35 @@ function renderDurationChart() {
         else buckets['2+ hours']++;
     });
 
+    const durationColors = ['#1a73e8', '#34a853', '#fbbc04', '#ea4335', '#9aa0a6'];
+
     const options = {
         ...getCommonChartOptions(),
         series: Object.values(buckets),
         labels: Object.keys(buckets),
+        colors: durationColors,
         chart: { type: 'pie', height: 350 },
-        legend: { position: 'bottom' },
-        tooltip: { y: { formatter: (val) => `${val} meetings` } }
+        stroke: {
+            show: false
+        },
+        legend: { 
+            position: 'bottom',
+            labels: {
+                colors: '#e8eaed'
+            }
+        },
+        tooltip: { 
+            y: { formatter: (val) => `${val} meetings` },
+            theme: 'dark'
+        },
+        dataLabels: {
+            enabled: true,
+            style: {
+                fontSize: '12px',
+                colors: ['#ffffff'],
+                fontWeight: 'bold'
+            }
+        }
     };
     renderChart('duration-chart', options);
 }
