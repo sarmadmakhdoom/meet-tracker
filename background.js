@@ -477,14 +477,26 @@ async function clearAllData() {
 
 // Force end current meeting (zombie cleanup)
 async function forceEndCurrentMeeting() {
-    if (currentMeetingState.state !== 'active' || !currentMeetingState.currentMeeting) {
-        return { success: false, message: 'No active meeting to end' };
-    }
-    
-    console.log('🔧 Force ending current meeting:', currentMeetingState.currentMeeting.title);
+    console.log('🔧 Force ending zombie meetings...');
     
     try {
-        // First, try to send message to content script to end the meeting properly
+        // Get all meetings from storage
+        const meetings = await getMeetings();
+        
+        // Find all ongoing meetings (meetings without endTime)
+        const ongoingMeetings = meetings.filter(meeting => !meeting.endTime);
+        
+        if (ongoingMeetings.length === 0) {
+            console.log('📝 No ongoing meetings found in database');
+            return { success: false, message: 'No ongoing meetings found to end' };
+        }
+        
+        console.log(`🔍 Found ${ongoingMeetings.length} ongoing meetings to end:`);
+        ongoingMeetings.forEach(meeting => {
+            console.log(`  - "${meeting.title}" (${meeting.id}) started at ${new Date(meeting.startTime).toLocaleTimeString()}`);
+        });
+        
+        // First, try to send message to content scripts to end meetings properly
         const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
         
         if (tabs.length > 0) {
@@ -498,40 +510,59 @@ async function forceEndCurrentMeeting() {
             }
         }
         
-        // Force end the meeting in background state regardless
+        // Force end all ongoing meetings in the database
         const endTime = Date.now();
-        const finalMeeting = {
-            ...currentMeetingState.currentMeeting,
-            endTime,
-            participants: currentMeetingState.participants,
-            forceEnded: true
-        };
+        let endedCount = 0;
+        let totalDuration = 0;
         
-        // Save the meeting
-        await saveMeeting(finalMeeting);
+        const updatedMeetings = meetings.map(meeting => {
+            if (!meeting.endTime) {
+                // This is an ongoing meeting - end it
+                const duration = endTime - meeting.startTime;
+                totalDuration += duration;
+                endedCount++;
+                
+                return {
+                    ...meeting,
+                    endTime,
+                    forceEnded: true,
+                    forceEndReason: 'manual_cleanup'
+                };
+            }
+            return meeting;
+        });
         
-        const duration = endTime - finalMeeting.startTime;
-        console.log(`🔧 Force ended meeting after ${Math.round(duration / 60000)} minutes`);
+        // Save all meetings back to storage
+        await saveMeetings(updatedMeetings);
         
-        // Reset state
-        currentMeetingState = {
-            state: 'none',
-            participants: [],
-            currentMeeting: null,
-            networkParticipants: 0
-        };
+        console.log(`🔧 Force ended ${endedCount} ongoing meetings`);
         
-        // Update icon
-        updateIcon('none', []);
+        // Reset current meeting state if it was one of the ended meetings
+        if (currentMeetingState.currentMeeting && 
+            ongoingMeetings.some(m => m.id === currentMeetingState.currentMeeting.id)) {
+            console.log('🔄 Resetting current meeting state');
+            currentMeetingState = {
+                state: 'none',
+                participants: [],
+                currentMeeting: null,
+                networkParticipants: 0
+            };
+            
+            // Update icon
+            updateIcon('none', []);
+        }
+        
+        const avgDuration = endedCount > 0 ? Math.round(totalDuration / endedCount / 60000) : 0;
         
         return { 
             success: true, 
-            message: `Meeting "${finalMeeting.title}" ended successfully`,
-            duration: Math.round(duration / 60000)
+            message: `Successfully ended ${endedCount} ongoing meeting${endedCount !== 1 ? 's' : ''} (avg duration: ${avgDuration} min)`,
+            endedCount,
+            avgDuration
         };
         
     } catch (error) {
-        console.error('Error force ending meeting:', error);
+        console.error('Error force ending meetings:', error);
         return { success: false, message: error.message };
     }
 }
@@ -543,21 +574,114 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     }
 });
 
-chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-    // Check if removed tab was a meeting tab
-    if (currentMeetingState.state === 'active') {
-        chrome.tabs.query({ url: 'https://meet.google.com/*' }, (tabs) => {
+chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
+    console.log('🗂️ Tab removed:', tabId);
+    
+    // Check if removed tab was a meeting tab and if we have an active meeting
+    if (currentMeetingState.state === 'active' && currentMeetingState.currentMeeting) {
+        try {
+            // Query remaining Google Meet tabs
+            const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
+            console.log(`📍 ${tabs.length} Google Meet tabs remaining after tab ${tabId} closed`);
+            
             if (tabs.length === 0) {
-                console.log('📍 No more Meet tabs, ending meeting');
+                console.log('🚫 No more Meet tabs, automatically ending zombie meeting');
+                
+                // End the current meeting since no tabs are open
+                const endTime = Date.now();
+                const finalMeeting = {
+                    ...currentMeetingState.currentMeeting,
+                    endTime,
+                    participants: currentMeetingState.participants,
+                    autoEnded: true, // Mark that this was auto-ended due to tab closure
+                    reason: 'tab_closed'
+                };
+                
+                // Save the meeting
+                await saveMeeting(finalMeeting);
+                
+                const duration = endTime - finalMeeting.startTime;
+                console.log(`🔧 Auto-ended zombie meeting after ${Math.round(duration / 60000)} minutes (reason: tab closed)`);
+                
+                // Reset state
                 currentMeetingState = {
                     state: 'none',
                     participants: [],
                     currentMeeting: null,
                     networkParticipants: 0
                 };
+                
+                // Update icon
                 updateIcon('none', []);
+            } else {
+                // There are still Meet tabs open, but check if any are active
+                console.log(`📋 Checking remaining ${tabs.length} Meet tabs for active meetings...`);
+                
+                let hasActiveMeeting = false;
+                for (const tab of tabs) {
+                    try {
+                        // Send a message to check if the tab has an active meeting
+                        const response = await new Promise((resolve) => {
+                            chrome.tabs.sendMessage(tab.id, { type: 'get_meeting_state' }, (response) => {
+                                // Ignore chrome.runtime.lastError to avoid console errors
+                                resolve(response);
+                            });
+                        });
+                        
+                        if (response && response.meetingState && response.meetingState.isActive) {
+                            hasActiveMeeting = true;
+                            console.log(`📍 Found active meeting in tab ${tab.id}`);
+                            break;
+                        }
+                    } catch (error) {
+                        // Tab might not respond, continue checking others
+                        console.log(`Could not check tab ${tab.id}:`, error.message);
+                    }
+                }
+                
+                if (!hasActiveMeeting) {
+                    console.log('🚫 No active meetings found in remaining tabs, ending zombie meeting');
+                    
+                    // End the current meeting since no active meetings were found
+                    const endTime = Date.now();
+                    const finalMeeting = {
+                        ...currentMeetingState.currentMeeting,
+                        endTime,
+                        participants: currentMeetingState.participants,
+                        autoEnded: true, // Mark that this was auto-ended
+                        reason: 'no_active_tabs'
+                    };
+                    
+                    // Save the meeting
+                    await saveMeeting(finalMeeting);
+                    
+                    const duration = endTime - finalMeeting.startTime;
+                    console.log(`🔧 Auto-ended zombie meeting after ${Math.round(duration / 60000)} minutes (reason: no active tabs)`);
+                    
+                    // Reset state
+                    currentMeetingState = {
+                        state: 'none',
+                        participants: [],
+                        currentMeeting: null,
+                        networkParticipants: 0
+                    };
+                    
+                    // Update icon
+                    updateIcon('none', []);
+                }
             }
-        });
+        } catch (error) {
+            console.error('❌ Error during automatic zombie meeting cleanup:', error);
+            
+            // Fallback: reset state anyway to prevent permanent zombie state
+            currentMeetingState = {
+                state: 'none',
+                participants: [],
+                currentMeeting: null,
+                networkParticipants: 0
+            };
+            updateIcon('none', []);
+        }
     }
 });
 
@@ -636,6 +760,142 @@ async function checkExistingMeetings() {
         console.error('Error checking existing meetings:', error);
     }
 }
+
+// Detect and cleanup zombie meetings - check every 2 minutes
+async function detectAndCleanupZombieMeetings() {
+    console.log('🕵️ Running periodic zombie meeting detection...');
+    
+    try {
+        // Check if we have an active meeting in our state
+        if (currentMeetingState.state !== 'active' || !currentMeetingState.currentMeeting) {
+            console.log('📝 No active meeting in background state, skipping zombie detection');
+            return;
+        }
+        
+        console.log(`🔍 Checking for zombie meeting: "${currentMeetingState.currentMeeting.title}" (ID: ${currentMeetingState.currentMeeting.id})`);
+        
+        // Get all Google Meet tabs
+        const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
+        console.log(`📋 Found ${tabs.length} Google Meet tabs`);
+        
+        if (tabs.length === 0) {
+            console.log('🚫 No Google Meet tabs found - ending zombie meeting');
+            await endZombieMeeting('no_meet_tabs');
+            return;
+        }
+        
+        // Check each tab to see if any has an active meeting
+        let activeMeetingFound = false;
+        let checkedTabs = 0;
+        
+        for (const tab of tabs) {
+            try {
+                console.log(`🔍 Checking tab ${tab.id}: ${tab.url}`);
+                
+                // Send message to content script to get meeting state
+                const response = await new Promise((resolve) => {
+                    chrome.tabs.sendMessage(tab.id, { type: 'get_meeting_state' }, (response) => {
+                        // Ignore chrome.runtime.lastError to avoid console spam
+                        resolve(response || null);
+                    });
+                });
+                
+                checkedTabs++;
+                
+                if (response && response.meetingState) {
+                    const { meetingState, participants, participantCount } = response;
+                    console.log(`📊 Tab ${tab.id} meeting state:`, {
+                        isActive: meetingState.isActive,
+                        meetingId: meetingState.meetingId,
+                        participantCount: participantCount || 0
+                    });
+                    
+                    // Check if this tab has an active meeting
+                    if (meetingState.isActive && meetingState.meetingId) {
+                        activeMeetingFound = true;
+                        console.log(`✅ Found active meeting in tab ${tab.id}: ${meetingState.meetingId}`);
+                        
+                        // Update our current meeting state with fresh data if it matches
+                        if (currentMeetingState.currentMeeting.id === meetingState.meetingId) {
+                            console.log('🔄 Updating current meeting state with fresh data from tab');
+                            currentMeetingState.participants = participants || [];
+                            currentMeetingState.networkParticipants = participantCount || 0;
+                            
+                            // Update the meeting in storage with latest participant data
+                            const meeting = {
+                                ...currentMeetingState.currentMeeting,
+                                participants: participants || [],
+                                lastUpdated: Date.now()
+                            };
+                            await saveMeetingUpdate(meeting);
+                        }
+                        break; // Found active meeting, no need to check other tabs
+                    } else {
+                        console.log(`📝 Tab ${tab.id} has no active meeting`);
+                    }
+                } else {
+                    console.log(`⚠️ Tab ${tab.id} did not respond or has no meeting state`);
+                }
+                
+            } catch (error) {
+                console.log(`❌ Error checking tab ${tab.id}:`, error.message);
+                checkedTabs++;
+            }
+        }
+        
+        console.log(`📋 Checked ${checkedTabs}/${tabs.length} tabs, active meeting found: ${activeMeetingFound}`);
+        
+        // If no active meeting was found in any tab, end the zombie meeting
+        if (!activeMeetingFound) {
+            console.log('🚫 No active meetings found in any tabs - ending zombie meeting');
+            await endZombieMeeting('no_active_meeting_in_tabs');
+        } else {
+            console.log('✅ Active meeting confirmed, continuing tracking');
+        }
+        
+    } catch (error) {
+        console.error('❌ Error during zombie meeting detection:', error);
+    }
+}
+
+// Helper function to end zombie meetings
+async function endZombieMeeting(reason) {
+    if (!currentMeetingState.currentMeeting) {
+        console.log('⚠️ No current meeting to end');
+        return;
+    }
+    
+    const endTime = Date.now();
+    const finalMeeting = {
+        ...currentMeetingState.currentMeeting,
+        endTime,
+        participants: currentMeetingState.participants,
+        autoEnded: true,
+        reason: reason
+    };
+    
+    // Save the meeting
+    await saveMeeting(finalMeeting);
+    
+    const duration = endTime - finalMeeting.startTime;
+    console.log(`🔧 Auto-ended zombie meeting "${finalMeeting.title}" after ${Math.round(duration / 60000)} minutes (reason: ${reason})`);
+    
+    // Reset state
+    currentMeetingState = {
+        state: 'none',
+        participants: [],
+        currentMeeting: null,
+        networkParticipants: 0
+    };
+    
+    // Update icon
+    updateIcon('none', []);
+}
+
+// Periodic zombie meeting detection (every 2 minutes)
+setInterval(async () => {
+    await detectAndCleanupZombieMeetings();
+}, 2 * 60 * 1000); // Run every 2 minutes
 
 // Periodically cleanup old meetings (simple setTimeout approach)
 setInterval(async () => {

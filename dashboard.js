@@ -216,6 +216,7 @@ function setupEventListeners() {
     document.getElementById('apply-filters').addEventListener('click', applyFilters);
     document.getElementById('export-data').addEventListener('click', exportData);
     document.getElementById('clear-data').addEventListener('click', clearAllData);
+    document.getElementById('cleanup-zombie-btn').addEventListener('click', cleanupZombieMeetings);
     
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('meeting-modal').addEventListener('click', (e) => {
@@ -1393,6 +1394,61 @@ async function exportEnhancedData() {
     } catch (error) {
         console.error('Error during export:', error);
         alert('Export failed. Please try again.');
+    }
+}
+
+// Force end zombie meetings (similar to popup)
+async function cleanupZombieMeetings() {
+    const cleanupBtn = document.getElementById('cleanup-zombie-btn');
+    const originalText = cleanupBtn.textContent;
+    
+    // Show loading state
+    cleanupBtn.textContent = '🔄 Cleaning...';
+    cleanupBtn.disabled = true;
+    
+    try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+            alert('Extension context invalidated. Please refresh the page.');
+            return;
+        }
+        
+        // Send force end message to background script
+        const response = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ type: 'forceEndMeeting' }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (response && response.success) {
+            // Show success message
+            alert(`✅ Success: ${response.message || 'Zombie meetings ended successfully'}`);
+            
+            // Refresh the dashboard data
+            setTimeout(async () => {
+                try {
+                    await loadMeetings();
+                    applyFilters();
+                } catch (error) {
+                    console.error('Error refreshing after zombie cleanup:', error);
+                }
+            }, 1000);
+        } else {
+            alert(response?.message || '⚠️ No zombie meetings found to end');
+        }
+        
+    } catch (error) {
+        console.error('Error during zombie cleanup:', error);
+        alert('❌ Error ending zombie meetings: ' + error.message);
+    } finally {
+        // Reset button after 2 seconds
+        setTimeout(() => {
+            cleanupBtn.textContent = originalText;
+            cleanupBtn.disabled = false;
+        }, 2000);
     }
 }
 

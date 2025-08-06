@@ -180,6 +180,7 @@ body {
     transform: translateY(-1px);
 }
 
+
 /* Filters */
 .filters {
     max-width: 1400px;
@@ -821,6 +822,18 @@ button {
 .btn-compact.btn-danger-compact:hover {
     background: rgba(234, 67, 53, 0.2);
     border-color: #ea4335;
+}
+
+.btn-compact.btn-warning-compact {
+    border-color: #f59e0b;
+    background: rgba(245, 158, 11, 0.1);
+}
+
+.btn-compact.btn-warning-compact:hover {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: #f59e0b;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
 }
 
 /* Tooltip for compact buttons */

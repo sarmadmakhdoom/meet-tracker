@@ -51,6 +51,9 @@ class SimpleMeetTracker {
     // Set up message listener
     this.setupMessageListener();
     
+    // Set up URL change detection
+    this.setupURLChangeDetection();
+    
     // Check meeting state
     this.updateMeetingState();
   }
@@ -62,28 +65,48 @@ class SimpleMeetTracker {
 
   setupDOMObserver() {
     const observer = new MutationObserver((mutations) => {
-      let shouldScan = false;
+      let shouldCheckMeetingState = false;
       
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList') {
-          // Check if any added nodes contain participant data
-          for (const node of mutation.addedNodes) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+          // Check if any added nodes are related to meeting elements
+          for (let node of mutation.addedNodes) {
+            if (node.nodeType === 1) { // Element node
+              const nodeText = node.textContent || '';
               if (node.querySelector && (
-                  node.querySelector('*[data-participant-id]') ||
-                  node.matches('*[data-participant-id]')
-                )) {
-                shouldScan = true;
+                node.querySelector('[data-participant-id]') ||
+                node.querySelector('[aria-label*="camera"]') ||
+                node.querySelector('[aria-label*="microphone"]') ||
+                node.querySelector('[aria-label*="Join"]') ||
+                node.querySelector('[aria-label*="Leave"]') ||
+                node.querySelector('[aria-label*="End call"]') ||
+                node.querySelector('[aria-label*="Ask to join"]') ||
+                node.querySelector('[aria-label*="Rejoin"]') ||
+                node.querySelector('button') ||
+                nodeText.includes('You left the meeting') ||
+                nodeText.includes('Thanks for joining') ||
+                nodeText.includes('The meeting has ended') ||
+                nodeText.includes('Rejoin') ||
+                nodeText.includes('Return to home') ||
+                nodeText.includes('Ask to join') ||
+                nodeText.includes('Meeting ended') ||
+                node.querySelector('video')
+              )) {
+                shouldCheckMeetingState = true;
+                console.log('[SimpleMeetTracker] Meeting-related DOM change detected:', nodeText.substring(0, 100));
                 break;
               }
             }
           }
         }
-      }
+      });
       
-      if (shouldScan) {
-        console.log('[SimpleMeetTracker] DOM changes detected, scanning for participants');
-        setTimeout(() => this.scanForParticipants(), 100);
+      if (shouldCheckMeetingState) {
+        console.log('[SimpleMeetTracker] DOM changed, rechecking meeting state...');
+        setTimeout(() => {
+          this.scanForParticipants();
+          this.updateMeetingState();
+        }, 500);
       }
     });
 
@@ -92,7 +115,7 @@ class SimpleMeetTracker {
       subtree: true
     });
 
-    console.log('[SimpleMeetTracker] DOM observer set up');
+    console.log('[SimpleMeetTracker] Enhanced DOM observer set up');
   }
 
   setupPeriodicScan() {
@@ -100,6 +123,11 @@ class SimpleMeetTracker {
     setInterval(() => {
       this.scanForParticipants();
     }, 5000);
+    
+    // Additional aggressive meeting state checking every 10 seconds
+    setInterval(() => {
+      this.aggressiveMeetingStateCheck();
+    }, 10000);
   }
 
   scanForParticipants() {
@@ -249,7 +277,110 @@ class SimpleMeetTracker {
   }
 
   hasMeetingControls() {
-    return document.querySelectorAll('[data-is-muted], [data-is-video-on]').length > 0;
+    console.log('[SimpleMeetTracker] === Detecting Meeting State ===');
+    
+    // First check: Are we on a valid meeting URL?
+    const urlPattern = window.location.pathname.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/);
+    if (!urlPattern) {
+      console.log('[SimpleMeetTracker] Not on a meeting URL - not in meeting');
+      return false;
+    }
+    
+    // CRITICAL: Check for post-meeting indicators first (most reliable)
+    const rejoinButton = document.querySelector('button[aria-label*="Rejoin"]');
+    const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"], a[href*="/"]');
+    
+    // Check for post-meeting text content
+    const postMeetingTexts = [
+      'You left the meeting',
+      'The meeting has ended', 
+      'Thanks for joining',
+      'Return to home screen',
+      'Rejoin',
+      'Meeting ended',
+      'You have left the meeting'
+    ];
+    
+    const bodyText = document.body.textContent || '';
+    let hasPostMeetingText = false;
+    for (let text of postMeetingTexts) {
+      if (bodyText.includes(text)) {
+        hasPostMeetingText = true;
+        console.log(`[SimpleMeetTracker] Found post-meeting text: "${text}"`);
+        break;
+      }
+    }
+    
+    if (rejoinButton || returnHomeButton || hasPostMeetingText) {
+      console.log(`[SimpleMeetTracker] Found post-meeting indicators (Rejoin: ${!!rejoinButton}, Return Home: ${!!returnHomeButton}, Text: ${hasPostMeetingText}) - not in meeting`);
+      return false;
+    }
+    
+    // PRIMARY CHECK: "Leave call" or "End call" button is strongest indicator of active meeting
+    const leaveCallButton = document.querySelector('[aria-label*="Leave call"], [aria-label*="End call"]');
+    if (leaveCallButton) {
+      console.log('[SimpleMeetTracker] Found "Leave call" button - in active meeting');
+      return true;
+    }
+    
+    // Check for waiting room / pre-meeting state
+    const joinButton = document.querySelector('[aria-label*="Join"], button[jsname="Qx7uuf"]');
+    const askToJoinButton = document.querySelector('[aria-label*="Ask to join"]');
+    
+    // Check for companion mode button by text content
+    let useCompanionModeButton = null;
+    const buttons = document.querySelectorAll('button');
+    for (let button of buttons) {
+      const buttonText = button.textContent?.toLowerCase() || '';
+      if (buttonText.includes('use companion mode') || buttonText.includes('join now') || buttonText.includes('ask to join')) {
+        useCompanionModeButton = button;
+        break;
+      }
+    }
+    
+    // Check for waiting room specific text patterns
+    const waitingRoomTexts = [
+      'Join now', 'Ask to join', 'Waiting to join',
+      'Someone will let you in soon', "You're waiting for someone to let you in",
+      'Check your audio and video', 'Preview your audio and video'
+    ];
+    
+    let hasWaitingText = false;
+    for (let text of waitingRoomTexts) {
+      if (bodyText.includes(text)) {
+        hasWaitingText = true;
+        console.log(`[SimpleMeetTracker] Found waiting room text: "${text}"`);
+        break;
+      }
+    }
+    
+    // Check for camera/microphone preview elements (typical in waiting room)
+    const previewVideo = document.querySelector('video[autoplay], video[muted]');
+    const micCamControls = document.querySelector('[aria-label*="Turn on camera"], [aria-label*="Turn off camera"], [aria-label*="microphone"]');
+    
+    if (joinButton || askToJoinButton || useCompanionModeButton || hasWaitingText || (previewVideo && micCamControls)) {
+      console.log(`[SimpleMeetTracker] In preview/waiting room (Join: ${!!joinButton}, AskToJoin: ${!!askToJoinButton}, Companion: ${!!useCompanionModeButton}, WaitingText: ${hasWaitingText}, Preview: ${!!(previewVideo && micCamControls)}) - not in active meeting`);
+      return false;
+    }
+    
+    // Fallback check for active meeting using participant grid or participants
+    const participantGrid = document.querySelector('[jsname="A5il2e"]');
+    const hasParticipants = this.participants.size > 0;
+    
+    if (participantGrid || hasParticipants) {
+      console.log(`[SimpleMeetTracker] Found participant grid or participants (Grid: ${!!participantGrid}, Participants: ${hasParticipants}) - in active meeting`);
+      return true;
+    }
+    
+    // Additional fallback checks
+    const controls = document.querySelectorAll('[data-is-muted], [data-is-video-on]').length > 0;
+    const meetingArea = document.querySelector('[data-allocation-index]'); // Main meeting area
+    const videoElements = document.querySelectorAll('video').length > 0;
+    
+    const hasIndicators = controls || meetingArea || videoElements;
+    console.log(`[SimpleMeetTracker] Final check - controls: ${controls}, meetingArea: ${!!meetingArea}, videos: ${videoElements}, result: ${hasIndicators}`);
+    
+    return hasIndicators;
   }
 
   sendUpdateToBackground() {
@@ -603,6 +734,214 @@ class SimpleMeetTracker {
       
       // Reset state
       this.lastParticipantVisibility = null;
+    }
+  }
+  
+  // Aggressive meeting state checking - more frequent and thorough
+  aggressiveMeetingStateCheck() {
+    console.log('[SimpleMeetTracker] Running aggressive meeting state check...');
+    
+    // Check current meeting controls state
+    const hasMeetingControls = this.hasMeetingControls();
+    const hasParticipants = this.participants.size > 0;
+    const currentlyActive = this.meetingState.isActive;
+    
+    console.log(`[SimpleMeetTracker] Aggressive check: controls=${hasMeetingControls}, participants=${hasParticipants}, active=${currentlyActive}`);
+    
+    // If we think the meeting is active but there's no evidence of it
+    if (currentlyActive && !hasMeetingControls && !hasParticipants) {
+      const now = Date.now();
+      const timeSinceStart = now - this.meetingState.startTime;
+      
+      // If the meeting has been "active" for at least 30 seconds but shows no signs of life
+      if (timeSinceStart > 30 * 1000) {
+        console.log('[SimpleMeetTracker] Aggressive check: Ending meeting due to no activity signs');
+        
+        this.meetingState.isActive = false;
+        this.meetingState.endTime = now;
+        
+        // Send meeting end to background
+        this.sendMeetingStateToBackground('ended');
+        
+        // Stop minute tracking
+        this.stopMinuteTracking();
+        
+        // Clear participants
+        this.participants.clear();
+        
+        return;
+      }
+    }
+    
+    // Force a fresh scan for participants
+    this.scanForParticipants();
+    
+    // Update meeting state based on fresh data
+    this.updateMeetingState();
+  }
+
+  setupURLChangeDetection() {
+    // Store the original URL
+    let currentUrl = window.location.href;
+    
+    console.log('[SimpleMeetTracker] Setting up URL change detection');
+    
+    // Override history.pushState to detect navigation
+    const originalPushState = history.pushState;
+    history.pushState = function(state, title, url) {
+      const result = originalPushState.apply(this, arguments);
+      const newUrl = window.location.href;
+      
+      if (newUrl !== currentUrl) {
+        console.log(`[SimpleMeetTracker] URL changed from ${currentUrl} to ${newUrl}`);
+        currentUrl = newUrl;
+        tracker.handleURLChange(newUrl);
+      }
+      
+      return result;
+    };
+    
+    // Override history.replaceState to detect navigation
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function(state, title, url) {
+      const result = originalReplaceState.apply(this, arguments);
+      const newUrl = window.location.href;
+      
+      if (newUrl !== currentUrl) {
+        console.log(`[SimpleMeetTracker] URL replaced from ${currentUrl} to ${newUrl}`);
+        currentUrl = newUrl;
+        tracker.handleURLChange(newUrl);
+      }
+      
+      return result;
+    };
+    
+    // Listen for back/forward navigation
+    window.addEventListener('popstate', (event) => {
+      const newUrl = window.location.href;
+      
+      if (newUrl !== currentUrl) {
+        console.log(`[SimpleMeetTracker] URL changed via popstate from ${currentUrl} to ${newUrl}`);
+        currentUrl = newUrl;
+        tracker.handleURLChange(newUrl);
+      }
+    });
+    
+    // Listen for hashchange (less common in Meet but good to have)
+    window.addEventListener('hashchange', (event) => {
+      const newUrl = window.location.href;
+      
+      if (newUrl !== currentUrl) {
+        console.log(`[SimpleMeetTracker] URL hash changed from ${currentUrl} to ${newUrl}`);
+        currentUrl = newUrl;
+        tracker.handleURLChange(newUrl);
+      }
+    });
+    
+    // Also periodically check for URL changes (fallback)
+    setInterval(() => {
+      const newUrl = window.location.href;
+      if (newUrl !== currentUrl) {
+        console.log(`[SimpleMeetTracker] URL change detected via polling from ${currentUrl} to ${newUrl}`);
+        currentUrl = newUrl;
+        tracker.handleURLChange(newUrl);
+      }
+    }, 2000); // Check every 2 seconds
+  }
+  
+  handleURLChange(newUrl) {
+    console.log(`[SimpleMeetTracker] Handling URL change: ${newUrl}`);
+    
+    // Check if we navigated away from the meeting
+    if (!this.isMeetPageFromUrl(newUrl)) {
+      console.log('[SimpleMeetTracker] Navigated away from meeting page - ending meeting');
+      
+      if (this.meetingState.isActive) {
+        // End the meeting immediately
+        const now = Date.now();
+        this.meetingState.isActive = false;
+        this.meetingState.endTime = now;
+        
+        // Send meeting end to background
+        this.sendMeetingStateToBackground('ended');
+        
+        // Stop minute tracking
+        this.stopMinuteTracking();
+        
+        // Clear participants
+        this.participants.clear();
+      }
+      
+      return;
+    }
+    
+    // Check if we're on a meeting ended or landing page
+    if (newUrl.includes('/landing/') || newUrl.includes('/ended/')) {
+      console.log('[SimpleMeetTracker] On meeting landing/ended page - ending meeting');
+      
+      if (this.meetingState.isActive) {
+        const now = Date.now();
+        this.meetingState.isActive = false;
+        this.meetingState.endTime = now;
+        
+        this.sendMeetingStateToBackground('ended');
+        this.stopMinuteTracking();
+        this.participants.clear();
+      }
+      
+      return;
+    }
+    
+    // If we're still on a meeting page, update meeting state
+    if (this.isMeetPageFromUrl(newUrl)) {
+      console.log('[SimpleMeetTracker] Still on meeting page after URL change - updating state');
+      
+      // Update meeting ID if it changed (different meeting)
+      const newMeetingId = this.getMeetingIdFromUrl(newUrl);
+      if (newMeetingId !== this.meetingState.meetingId) {
+        console.log(`[SimpleMeetTracker] Meeting ID changed from ${this.meetingState.meetingId} to ${newMeetingId}`);
+        
+        // End current meeting and start new one
+        if (this.meetingState.isActive) {
+          const now = Date.now();
+          this.meetingState.isActive = false;
+          this.meetingState.endTime = now;
+          this.sendMeetingStateToBackground('ended');
+          this.stopMinuteTracking();
+        }
+        
+        // Clear participants and reset state for new meeting
+        this.participants.clear();
+        this.meetingState = {
+          isActive: false,
+          meetingId: newMeetingId,
+          startTime: null,
+          meetingTitle: null
+        };
+      }
+      
+      // Re-scan for participants and update state
+      setTimeout(() => {
+        this.scanForParticipants();
+        this.updateMeetingState();
+      }, 1000); // Give page time to load
+    }
+  }
+  
+  isMeetPageFromUrl(url) {
+    return url.includes('meet.google.com/') && 
+           !url.includes('/landing/') &&
+           !url.includes('/ended/');
+  }
+  
+  getMeetingIdFromUrl(url) {
+    try {
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split('/');
+      return pathParts[pathParts.length - 1] || 'unknown';
+    } catch (e) {
+      console.warn('[SimpleMeetTracker] Failed to parse URL:', url);
+      return 'unknown';
     }
   }
 
