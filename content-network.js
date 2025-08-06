@@ -78,16 +78,10 @@ class NetworkMeetTracker {
     }
   }
 
-  // Set up listeners for network data events (using both formats)
+  // Set up listeners for network data events
   setupNetworkListeners() {
-    // Listen for our enhanced events
     window.addEventListener('meettracker-network-data', (event) => {
       this.handleNetworkData(event.detail);
-    });
-    
-    // Listen for working extension format events
-    window.addEventListener('gmal-message', (event) => {
-      this.handleWorkingExtensionFormat(event.detail);
     });
   }
 
@@ -117,88 +111,6 @@ class NetworkMeetTracker {
     } catch (error) {
       console.debug('[MeetTracker] Error parsing network data:', error);
     }
-  }
-
-  // Handle data from working extension format (gmal-message events)
-  handleWorkingExtensionFormat(detail) {
-    const { eventName } = detail;
-    
-    try {
-      if (eventName === 'meetings.decode_sync') {
-        // Process base64 sync data from proven working extension
-        this.parseBase64SyncData(detail.b64);
-      } else if (eventName === 'meetings.event_details') {
-        // Process calendar event details
-        this.handleCalendarEventDetails(detail);
-      } else if (eventName === 'meetings.close_auto') {
-        // Meeting ended
-        this.handleMeetingEnd();
-      }
-      
-      // Update meeting state and notify background
-      this.updateMeetingState();
-      this.sendUpdateToBackground();
-    } catch (error) {
-      console.debug('[MeetTracker] Error handling working extension data:', error);
-    }
-  }
-
-  // Parse base64-encoded sync data (proven working format)
-  parseBase64SyncData(base64String) {
-    try {
-      // The base64 string contains Google Meet's sync data
-      // We need to decode and parse it for participant information
-      
-      // Try direct parsing first
-      this.parseSyncData(base64String);
-      
-      // Also trigger DOM-based participant extraction as backup
-      setTimeout(() => {
-        this.extractAllDOMParticipants();
-      }, 100);
-      
-      console.log('[MeetTracker] Processed SyncMeetingSpaceCollections data');
-    } catch (error) {
-      console.debug('[MeetTracker] Error parsing base64 sync data:', error);
-    }
-  }
-
-  // Handle calendar event details from working extension
-  handleCalendarEventDetails(detail) {
-    const { eventDetails, calendarId } = detail;
-    
-    if (eventDetails && eventDetails.summary) {
-      this.meetingState.meetingTitle = eventDetails.summary;
-    }
-    
-    if (eventDetails && eventDetails.attendees) {
-      eventDetails.attendees.forEach(attendee => {
-        if (attendee.email && attendee.displayName) {
-          this.updateParticipant({
-            id: attendee.email,
-            name: attendee.displayName,
-            email: attendee.email,
-            joinTime: Date.now(),
-            source: 'calendar_event'
-          });
-        }
-      });
-    }
-  }
-
-  // Handle meeting end
-  handleMeetingEnd() {
-    this.meetingState.isActive = false;
-    this.meetingState.endTime = Date.now();
-    
-    // Send final state to background
-    chrome.runtime.sendMessage({
-      type: 'meeting_ended',
-      data: {
-        meetingState: this.meetingState,
-        finalParticipants: Array.from(this.participantData.values())
-      }
-    });
   }
 
   // Parse Google Meet sync data for participant information
@@ -478,136 +390,15 @@ class NetworkMeetTracker {
         name = element.innerText.split('\n')[0].trim();
       }
       
-      // Extract avatar URL if available
-      let avatarUrl = null;
-      const imgElement = element.querySelector('img');
-      if (imgElement && imgElement.src) {
-        avatarUrl = imgElement.src;
-      }
-      
       if (name) {
         this.updateParticipant({
           id,
           name,
-          avatarUrl,
           joinTime: Date.now(),
           source: 'dom'
         });
       }
     });
-  }
-
-  // Extract all DOM participants with scrolling (from working extension)
-  async extractAllDOMParticipants() {
-    try {
-      const participantsTab = this.findParticipantsTab();
-      if (!participantsTab) {
-        console.debug('[MeetTracker] No participants tab found');
-        return;
-      }
-      
-      const firstParticipant = participantsTab.querySelector('*[data-participant-id]');
-      if (!firstParticipant) {
-        console.debug('[MeetTracker] No participants found in tab');
-        return;
-      }
-      
-      const participantsContainer = this.findScrollableParent(firstParticipant);
-      if (!participantsContainer) {
-        console.debug('[MeetTracker] No scrollable container found');
-        return;
-      }
-      
-      const participantNames = new Set();
-      
-      // Scroll through all participants (logic from working extension)
-      do {
-        const participantElements = participantsContainer.querySelectorAll('*[data-participant-id]');
-        
-        Array.from(participantElements).forEach(item => {
-          let name;
-          if (item.dataset.sortKey) {
-            name = item.dataset.sortKey.replace(item.dataset.participantId, '').trim();
-          } else {
-            name = item.innerText.split('\n')[0].trim();
-          }
-          
-          if (name) {
-            participantNames.add(name);
-            
-            // Extract avatar URL
-            let avatarUrl = null;
-            const imgElement = item.querySelector('img');
-            if (imgElement && imgElement.src) {
-              avatarUrl = imgElement.src;
-            }
-            
-            this.updateParticipant({
-              id: item.dataset.participantId,
-              name,
-              avatarUrl,
-              joinTime: Date.now(),
-              source: 'dom_scroll'
-            });
-          }
-        });
-        
-        // Scroll down to load more participants
-        participantsContainer.scrollTop += 50;
-        
-        // Wait for new content to load
-        await this.sleep(100);
-        
-      } while (participantsContainer.scrollHeight - participantsContainer.scrollTop > participantsContainer.clientHeight);
-      
-      console.log(`[MeetTracker] Extracted ${participantNames.size} participants via DOM scrolling`);
-      
-    } catch (error) {
-      console.debug('[MeetTracker] Error extracting all DOM participants:', error);
-    }
-  }
-
-  // Find participants tab (from working extension logic)
-  findParticipantsTab(addedNode = null) {
-    // if the just added node has:
-    // - the data-tab-id attribute and
-    // - contains elements with data-participant-id
-    if (addedNode && addedNode.dataset && addedNode.dataset.tabId && addedNode.querySelector('*[data-participant-id]')) {
-      return addedNode;
-    }
-    
-    // run through all the tabs and see which one contains the participants
-    let allTabs = document.querySelectorAll('*[data-tab-id]');
-    if (allTabs.length === 0) {
-      // TODO: make data-panel-id primary selector after the new Meet UI changes are stable
-      allTabs = document.querySelectorAll('*[data-panel-id]');
-    }
-    
-    for (const tabElem of allTabs) {
-      if (tabElem.querySelector('*[data-participant-id]')) {
-        return tabElem;
-      }
-    }
-    
-    return null;
-  }
-
-  // Find scrollable parent (from working extension logic)
-  findScrollableParent(participantElem) {
-    let participantsContainer = participantElem;
-    let elemStyle = window.getComputedStyle(participantsContainer);
-    
-    while (elemStyle.getPropertyValue('overflow') === 'visible' && participantsContainer.parentNode) {
-      participantsContainer = participantsContainer.parentNode;
-      elemStyle = window.getComputedStyle(participantsContainer);
-    }
-    
-    return participantsContainer;
-  }
-
-  // Simple sleep utility
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   // Setup visibility change handler to update meeting state

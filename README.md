@@ -1,138 +1,190 @@
-# Google Meet Tracker Chrome Extension
+# Google Meet Tracker - Network Enhanced
 
-A Chrome extension that automatically tracks your Google Meet sessions, detects participants, and provides detailed analytics about your meeting activity.
+**Enhanced Chrome extension for automatic Google Meet participant tracking using network interception**
 
-## Features
+## 🚀 Quick Start
 
-- **Automatic Meeting Detection**: Detects when you join/leave Google Meet calls
-- **Participant Tracking**: Extracts participant names from meetings with minute-level precision
-- **Visual Indicator**: Extension icon highlights when you're in a meeting
-- **Meeting Analytics**: Comprehensive dashboard with charts and filters
-- **Data Export**: Export meeting data to CSV format
-- **Local Storage**: All data is stored locally on your machine
+### Installation
+1. Open Chrome and go to `chrome://extensions/`
+2. Enable "Developer mode" (toggle in top right)
+3. Click "Load unpacked" and select this directory
+4. The extension should appear as "Google Meet Tracker - Network Enhanced"
 
-## Installation
+### Testing
+1. Go to [Google Meet](https://meet.google.com/new)
+2. Join or create a meeting
+3. The extension icon should show participant count
+4. Check console (F12) for debug logs
 
-1. **Download Extension Files**: 
-   - Ensure all extension files are in a single directory
+## 🔧 Features
 
-2. **Create Icons** (required):
-   You need to create icon files in the `icons/` directory:
-   - `icon16.png` (16x16 pixels)
-   - `icon32.png` (32x32 pixels) 
-   - `icon48.png` (48x48 pixels)
-   - `icon128.png` (128x128 pixels)
-   - `icon16-active.png` (16x16 pixels, for active state)
-   - `icon32-active.png` (32x32 pixels, for active state)
-   - `icon48-active.png` (48x48 pixels, for active state)
-   - `icon128-active.png` (128x128 pixels, for active state)
+### ✅ **Fixed Issues**
+- **CSP Violations**: Resolved Content Security Policy errors by using external script files
+- **MutationObserver Errors**: Fixed DOM observation setup with proper readiness checks
+- **Auto-detection**: Extension now automatically detects existing meetings on reload
+- **Network Interception**: Properly intercepts Google Meet API calls for real-time data
 
-3. **Load Extension in Chrome**:
-   - Open Chrome and go to `chrome://extensions/`
-   - Enable "Developer mode" (toggle in top right)
-   - Click "Load unpacked" 
-   - Select the extension directory
-   - The extension should now appear in your Chrome toolbar
+### 🌟 **Enhanced Capabilities**
+- **Real-time participant tracking** via network API interception
+- **Auto-detection** of existing meetings when extension reloads
+- **Multiple data sources**: Network + DOM fallback for reliability
+- **Smart background processing** with persistent meeting state
+- **Visual feedback** via extension icon with participant counts
 
-## Usage
+## 🛠 Architecture
 
-### During Meetings
+### Network-Based Approach
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   network-shim.js  │ →  │  content-network.js  │ →  │ background-network.js │
+│                 │    │                  │    │                 │
+│ • Intercepts    │    │ • Processes      │    │ • Manages       │
+│   fetch/XHR     │    │   network data   │    │   meeting state │
+│ • Dispatches    │    │ • DOM fallback   │    │ • Updates icon  │
+│   events        │    │ • State tracking │    │ • Stores data   │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+```
 
-1. **Join a Google Meet**: Navigate to any Google Meet call
-2. **Automatic Detection**: The extension automatically detects when you're in a meeting
-3. **Visual Feedback**: Extension icon changes and shows participant count
-4. **Click Icon**: Click the extension icon to see current participants and meeting info
+### Key Components
+- **`network-shim.js`**: Intercepts Google Meet API calls (CSP-compliant)
+- **`content-network.js`**: Processes network data and manages meeting state
+- **`background-network.js`**: Handles persistent state and extension UI updates
+- **Auto-detection system**: Finds existing meetings on extension startup
 
-### Dashboard
+## 🔍 Debugging
 
-1. **Access Dashboard**: Click the extension icon and select "📊 Dashboard"
-2. **View Analytics**: 
-   - See total meetings, time spent, and unique participants
-   - View meeting activity charts and duration distribution
-   - Browse recent meetings and frequent participants
-3. **Filter Data**: 
-   - Filter by date ranges (Last 7/30/90 days or custom range)
-   - Filter by specific participants
-4. **Export Data**: Click "📄 Export CSV" to download your meeting data
+### Console Commands
+```javascript
+// Check extension state
+debugNetworkMeetTracker()
 
-### Key Features
+// Check network shims
+debugMeetTrackerShims()
 
-- **Minute-Level Tracking**: Records who was in meetings each minute
-- **Participant Detection**: Automatically identifies meeting participants
-- **Meeting History**: Complete log of all your Google Meet sessions
-- **Privacy-First**: All data stored locally, nothing sent to external servers
+// Full diagnostic (load debug-extension.js first)
+debugMeetExtension()
+```
 
-## Data Structure
+### Common Issues
 
-The extension tracks:
-- Meeting start/end times
-- Participant lists (updated every minute)
-- Meeting URLs
-- Duration and attendance patterns
+**❌ CSP Errors**
+- **Fixed**: Now uses external `network-shim.js` file instead of inline scripts
 
-## Browser Permissions
+**❌ MutationObserver Errors**  
+- **Fixed**: Proper DOM readiness checking and error handling
 
-- **Storage**: To save meeting data locally
-- **ActiveTab**: To interact with Google Meet pages
-- **Google Meet Access**: To detect meetings and extract participant data
+**❌ Extension not detecting existing meetings**
+- **Fixed**: Auto-detection system queries all Meet tabs on startup
 
-## Privacy
+## 📊 Network Interception
 
-- All data is stored locally in your browser
-- No data is sent to external servers
-- You can clear all data anytime from the dashboard
-- Extension only activates on Google Meet pages
+### Monitored API Endpoints
+- `SyncMeetingSpaceCollections` - Participant sync data
+- `BatchExecute` - Google's internal API system  
+- `/_/MeetCastleService/` - Meet service calls
+- `/calendar/` - Meeting metadata
+- `/call/participants` - Direct participant data
 
-## Troubleshooting
+### Data Processing
+1. **Network events** dispatched from injected shims
+2. **Multiple parsers** handle different response formats
+3. **Real-time updates** sent to background script
+4. **DOM fallback** ensures reliability when network fails
 
-### Extension Not Detecting Meetings
-1. Refresh the Google Meet tab
-2. Ensure you've granted all required permissions
-3. Check the browser console for any error messages
+## 🎯 Version Management
 
-### Missing Participants
-1. Google Meet's DOM structure may change - participant detection may need updates
-2. Some participants may not be visible if they haven't turned on video/audio
-3. Extension works best when the participants panel is visible
+```bash
+# Switch to network-enhanced version (recommended)
+./switch-version.sh network
 
-### Dashboard Not Loading
-1. Ensure you've clicked "Dashboard" from the extension popup
-2. Check if Chart.js is loading (requires internet connection)
-3. Clear extension data and restart if needed
+# Switch to basic DOM version (fallback)
+./switch-version.sh basic
 
-## Development
+# Test current installation
+./test-extension.sh
+```
 
-The extension consists of:
-- `manifest.json` - Extension configuration
-- `content.js` - Injected into Google Meet pages
-- `background.js` - Service worker for data management  
-- `popup.html/js` - Extension popup interface
-- `dashboard.html/js/css` - Analytics dashboard
+## 🔧 File Structure
 
-## Technical Details
+```
+MeetingExtension/
+├── manifest-network.json     # Network version manifest
+├── background-network.js     # Enhanced background service worker
+├── content-network.js        # Network-based content script
+├── network-shim.js          # External network interception (CSP-safe)
+├── popup.html               # Extension popup UI
+├── popup.js                 # Popup functionality
+├── debug-extension.js       # Debug utilities
+├── switch-version.sh        # Version switching script
+├── test-extension.sh        # Installation test script
+└── README.md               # This file
+```
 
-- **Manifest Version**: 3 (latest Chrome extension format)
-- **Framework**: Vanilla JavaScript
-- **Charts**: Chart.js for visualizations
-- **Storage**: Chrome Storage API
-- **Architecture**: Content Script + Background Service Worker
+## ⚙️ Technical Details
 
-## Future Enhancements
+### Permissions Required
+- `storage` - Save meeting data
+- `activeTab` - Access current tab
+- `scripting` - Inject content scripts
 
-- Meeting duration alerts
-- Calendar integration
-- Meeting notes/summaries
-- Team collaboration features
-- Advanced analytics and reporting
+### Host Permissions
+- `*://meet.google.com/*` - Google Meet pages
+- `*://clients6.google.com/*` - Google API calls
+- `*://calendar.google.com/*` - Calendar integration
+- `*://apis.google.com/*` - Additional Google APIs
 
-## Support
+### Security & Privacy
+- **No data sent externally** - All processing happens locally
+- **CSP compliant** - Uses external scripts, no inline code
+- **Minimal permissions** - Only requires access to Google Meet domains
 
-If you encounter issues:
-1. Check the troubleshooting section above
-2. Review browser console for error messages
-3. Ensure all extension files are present and icons are created
-4. Try reloading the extension from chrome://extensions/
+## 🐛 Troubleshooting
+
+### Step 1: Basic Checks
+1. Extension appears in `chrome://extensions/`
+2. Extension is enabled and has permissions
+3. You're on a `meet.google.com` page (not `/landing/`)
+
+### Step 2: Console Debugging
+1. Open developer tools (F12)
+2. Go to Console tab
+3. Look for `[MeetTracker]` messages
+4. Run `debugNetworkMeetTracker()` for current state
+
+### Step 3: Network Verification
+1. Run `debugMeetTrackerShims()` to check network interception
+2. Look for "📡 Intercepted" messages in console
+3. Verify participant elements exist: `document.querySelectorAll('[data-participant-id]').length`
+
+### Step 4: Extension Reset
+1. Disable and re-enable the extension
+2. Or reload the extension in `chrome://extensions/`
+3. Refresh the Google Meet page
+
+## 📝 Changelog
+
+### v1.1.0 - Network Enhanced
+- ✅ Fixed CSP violations by using external script files
+- ✅ Fixed MutationObserver errors with proper DOM handling  
+- ✅ Added auto-detection of existing meetings on extension reload
+- ✅ Enhanced network interception with multiple API endpoints
+- ✅ Improved error handling and fallback mechanisms
+- ✅ Added comprehensive debugging tools
+
+### v1.0.0 - Basic Version
+- Basic DOM-based participant detection
+- Manual refresh required
+- Limited to visible participants
 
 ---
 
-**Note**: This extension is designed specifically for Google Meet and requires manual icon creation before installation.
+## 🎉 Success Indicators
+
+When working properly, you should see:
+- ✅ Extension icon shows participant count badge
+- ✅ Console shows `[MeetTracker]` initialization messages
+- ✅ `debugNetworkMeetTracker()` returns meeting data
+- ✅ Network shims active: `debugMeetTrackerShims()` shows interception
+- ✅ Auto-detection works: Reload extension while in meeting, count persists
+
+**The extension now provides seamless, automatic meeting attendance tracking without any manual intervention required!** 🚀

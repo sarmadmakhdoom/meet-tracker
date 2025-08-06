@@ -36,88 +36,66 @@ async function setupNetworkMonitoring() {
 }
 
 // Handle messages from content script
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
     console.log(`📬 Background received: "${request.type || request.action}"`);
     
-    const messageType = request.type || request.action;
-    
-    // Handle async operations
-    const handleAsync = async () => {
-        try {
-            switch (messageType) {
-                case 'update_participants':
-                    await handleParticipantsUpdate(request.data, sender);
-                    sendResponse({ success: true });
-                    break;
-                    
-                case 'update_meeting_state':
-                    await handleMeetingStateUpdate(request.data, sender);
-                    sendResponse({ success: true });
-                    break;
-                    
-                case 'meetingStarted':
-                    await handleMeetingStarted(request.meeting, sender);
-                    sendResponse({ success: true });
-                    break;
-                    
-                case 'meetingUpdate':
-                    await handleMeetingUpdate(request.meeting, request.minuteData, sender);
-                    sendResponse({ success: true });
-                    break;
-                    
-                case 'meetingEnded':
-                    await handleMeetingEnded(request.meeting, sender);
-                    sendResponse({ success: true });
-                    break;
-                    
-                case 'updateIcon':
-                    updateIcon(request.state, request.participants);
-                    currentMeetingState.state = request.state;
-                    currentMeetingState.participants = request.participants || [];
-                    currentMeetingState.networkParticipants = request.networkParticipants || 0;
-                    sendResponse({ success: true });
-                    break;
-                    
-                case 'getMeetings':
-                    console.log('📥 Background: Getting meetings from storage...');
-                    const meetings = await getMeetings();
-                    console.log(`📤 Background: Sending ${meetings.length} meetings to dashboard`);
-                    sendResponse(meetings);
-                    break;
-                    
-                case 'getCurrentState':
-                    sendResponse(currentMeetingState);
-                    break;
-                    
-                case 'clearAllData':
-                    const result = await clearAllData();
-                    sendResponse(result);
-                    break;
-                    
-                case 'getNetworkStats':
-                    sendResponse({
-                        networkParticipants: currentMeetingState.networkParticipants,
-                        totalParticipants: currentMeetingState.participants.length,
-                        state: currentMeetingState.state
-                    });
-                    break;
-                    
-                default:
-                    console.warn(`⚠️ Unknown message type: ${messageType}`);
-                    sendResponse({ error: `Unknown message type: ${messageType}` });
-                    break;
-            }
-        } catch (error) {
-            console.error('❌ Error handling message:', error);
-            sendResponse({ error: error.message });
+    try {
+        const messageType = request.type || request.action;
+        
+        switch (messageType) {
+            case 'update_participants':
+                await handleParticipantsUpdate(request.data, sender);
+                break;
+                
+            case 'update_meeting_state':
+                await handleMeetingStateUpdate(request.data, sender);
+                break;
+                
+            case 'meetingStarted':
+                await handleMeetingStarted(request.meeting, sender);
+                break;
+                
+            case 'meetingUpdate':
+                await handleMeetingUpdate(request.meeting, request.minuteData, sender);
+                break;
+                
+            case 'meetingEnded':
+                await handleMeetingEnded(request.meeting, sender);
+                break;
+                
+            case 'updateIcon':
+                updateIcon(request.state, request.participants);
+                currentMeetingState.state = request.state;
+                currentMeetingState.participants = request.participants || [];
+                currentMeetingState.networkParticipants = request.networkParticipants || 0;
+                break;
+                
+            case 'getMeetings':
+                const meetings = await getMeetings();
+                sendResponse(meetings);
+                return true;
+                
+            case 'getCurrentState':
+                sendResponse(currentMeetingState);
+                break;
+                
+            case 'clearAllData':
+                const result = await clearAllData();
+                sendResponse(result);
+                return true;
+                
+            case 'getNetworkStats':
+                sendResponse({
+                    networkParticipants: currentMeetingState.networkParticipants,
+                    totalParticipants: currentMeetingState.participants.length,
+                    state: currentMeetingState.state
+                });
+                break;
         }
-    };
-    
-    // Execute async handler
-    handleAsync();
-    
-    // Return true to indicate we will respond asynchronously
-    return true;
+    } catch (error) {
+        console.error('❌ Error handling message:', error);
+        sendResponse({ error: error.message });
+    }
 });
 
 // Enhanced meeting started handler
@@ -178,65 +156,36 @@ async function handleMeetingEnded(meeting, sender) {
     updateIcon('none', []);
 }
 
-// Handle participants update from network interception (enhanced)
+// Handle participants update from network interception
 async function handleParticipantsUpdate(data, sender) {
     const { meetingId, meetingTitle, participants } = data;
     
-    // Analyze data sources
-    const networkParticipants = participants.filter(p => p.source?.includes('sync') || p.source?.includes('network')).length;
-    const domParticipants = participants.filter(p => p.source?.includes('dom')).length;
-    const avatarCount = participants.filter(p => p.avatarUrl).length;
-    
     console.log(`💶 Participants update: ${participants.length} participants in ${meetingId}`);
-    console.log(`   Network: ${networkParticipants}, DOM: ${domParticipants}, Avatars: ${avatarCount}`);
     
     // Update current meeting state
     if (!currentMeetingState.currentMeeting || currentMeetingState.currentMeeting.id !== meetingId) {
         // New meeting detected
-        const startTime = Date.now();
-        console.log(`🚀 New meeting detected: ${meetingId} at ${new Date(startTime).toLocaleTimeString()}`);
-        
         currentMeetingState.currentMeeting = {
             id: meetingId,
             title: meetingTitle || meetingId,
-            startTime: startTime,
-            url: sender.tab?.url,
-            dataSource: networkParticipants > 0 ? 'network' : 'dom'
+            startTime: Date.now(),
+            url: sender.tab?.url
         };
         currentMeetingState.state = 'active';
-    } else {
-        // Update existing meeting title if provided
-        if (meetingTitle && meetingTitle !== currentMeetingState.currentMeeting.title) {
-            currentMeetingState.currentMeeting.title = meetingTitle;
-            console.log(`📝 Meeting title updated: ${meetingTitle}`);
-        }
     }
     
-    // Update participants with enhanced data
+    // Update participants
     currentMeetingState.participants = participants;
-    currentMeetingState.networkParticipants = networkParticipants;
-    currentMeetingState.avatarCount = avatarCount;
+    currentMeetingState.networkParticipants = participants.length;
     
-    // Determine data source for icon
-    const hasNetworkData = networkParticipants > 0;
+    // Update icon with network data
+    updateIcon('active', participants);
     
-    // Update icon with enhanced information
-    updateIcon('active', participants, hasNetworkData);
-    
-    // Save meeting data with enhanced participant info
+    // Save meeting data
     const meeting = {
         ...currentMeetingState.currentMeeting,
-        participants: participants.map(p => ({
-            id: p.id,
-            name: p.name,
-            joinTime: p.joinTime,
-            avatarUrl: p.avatarUrl,
-            source: p.source,
-            email: p.email,
-            lastSeen: p.lastSeen
-        })),
-        lastUpdated: Date.now(),
-        dataSource: hasNetworkData ? (domParticipants > 0 ? 'hybrid' : 'network') : 'dom'
+        participants: participants,
+        lastUpdated: Date.now()
     };
     
     await saveMeetingUpdate(meeting);
@@ -271,9 +220,8 @@ async function handleMeetingStateUpdate(data, sender) {
 }
 
 // Enhanced icon update with network participant count
-function updateIcon(state, participants, hasNetworkData = false) {
-    const participantCount = participants ? participants.length : 0;
-    console.log(`🎨 Updating icon: ${state} (${participantCount} participants, ${currentMeetingState.networkParticipants} from network)`);
+function updateIcon(state, participants) {
+    console.log(`🎨 Updating icon: ${state} (${participants.length} participants, ${currentMeetingState.networkParticipants} from network)`);
     
     let iconPath;
     let badgeText = '';
@@ -288,27 +236,14 @@ function updateIcon(state, participants, hasNetworkData = false) {
                 '128': 'icons/icon128-active.png'
             };
             
+            const participantCount = participants.length;
             badgeText = participantCount.toString();
+            badgeColor = currentMeetingState.networkParticipants > 0 ? '#0f9d58' : '#34a853'; // Different green if network data
             
-            // Use different colors to indicate data source
-            if (hasNetworkData || currentMeetingState.networkParticipants > 0) {
-                badgeColor = '#0f9d58'; // Darker green for network data
-            } else {
-                badgeColor = '#34a853'; // Lighter green for DOM data
-            }
-            
-            // Enhanced tooltip with data source info
-            const networkCount = currentMeetingState.networkParticipants || 0;
-            const avatarCount = currentMeetingState.avatarCount || 0;
-            let dataSourceInfo = '';
-            
-            if (networkCount > 0) {
-                dataSourceInfo = ` (${networkCount} network${avatarCount > 0 ? `, ${avatarCount} avatars` : ''})`;
-            } else {
-                dataSourceInfo = ` (DOM${avatarCount > 0 ? `, ${avatarCount} avatars` : ''})`;
-            }
-            
-            title = `In meeting: ${participantCount} participant(s)${dataSourceInfo}`;
+            const networkInfo = currentMeetingState.networkParticipants > 0 
+                ? ` (${currentMeetingState.networkParticipants} from network)`
+                : ' (DOM only)';
+            title = `In meeting: ${participantCount} participant(s)${networkInfo}`;
             break;
             
         case 'waiting':
@@ -465,7 +400,7 @@ async function checkExistingMeetings() {
             try {
                 await chrome.scripting.executeScript({
                     target: { tabId: tab.id },
-                    files: ['content-simple.js']
+                    files: ['content-network.js']
                 });
                 console.log(`✅ Injected content script into tab ${tab.id}`);
                 

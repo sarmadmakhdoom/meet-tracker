@@ -15,12 +15,12 @@
     "*://apis.google.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-network.js"
   },
   "content_scripts": [
     {
       "matches": ["*://meet.google.com/*"],
-      "js": ["content-simple.js"],
+      "js": ["content-network.js"],
       "run_at": "document_start"
     }
   ],

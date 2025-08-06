@@ -175,8 +175,23 @@ function setupFallbackDateInputs() {
 function populateParticipantFilter() {
     const participantSelect = document.getElementById('participant-select');
     const participants = new Set();
+    
     allMeetings.forEach(meeting => {
-        meeting.participants.forEach(p => participants.add(p));
+        if (meeting.participants && Array.isArray(meeting.participants)) {
+            meeting.participants.forEach(p => {
+                // Handle different participant data formats
+                let participantName = '';
+                if (typeof p === 'string') {
+                    participantName = p;
+                } else if (p && typeof p === 'object') {
+                    participantName = p.name || p.displayName || p.id || 'Unknown';
+                }
+                
+                if (participantName && participantName !== 'Unknown') {
+                    participants.add(participantName);
+                }
+            });
+        }
     });
     
     const sortedParticipants = Array.from(participants).sort();
@@ -257,7 +272,19 @@ function applyFilters() {
         if (startDate && meetingDate < startDate) return false;
         if (endDate && meetingDate > endDate) return false;
         if (selectedParticipant && selectedParticipant !== '') {
-            return meeting.participants.includes(selectedParticipant);
+            // Handle both string and object participant formats
+            if (meeting.participants && Array.isArray(meeting.participants)) {
+                return meeting.participants.some(p => {
+                    let participantName = '';
+                    if (typeof p === 'string') {
+                        participantName = p;
+                    } else if (p && typeof p === 'object') {
+                        participantName = p.name || p.displayName || p.id || 'Unknown';
+                    }
+                    return participantName === selectedParticipant;
+                });
+            }
+            return false;
         }
         return true;
     });
@@ -288,7 +315,24 @@ function updateDashboard() {
 function updateSummaryStats() {
     const totalMeetings = filteredMeetings.length;
     const totalTime = filteredMeetings.reduce((sum, m) => sum + (m.endTime ? (m.endTime - m.startTime) : 0), 0);
-    const uniqueParticipants = new Set(filteredMeetings.flatMap(m => m.participants));
+    
+    // Handle participant uniqueness with both string and object formats
+    const uniqueParticipants = new Set();
+    filteredMeetings.forEach(m => {
+        if (m.participants && Array.isArray(m.participants)) {
+            m.participants.forEach(p => {
+                let participantName = '';
+                if (typeof p === 'string') {
+                    participantName = p;
+                } else if (p && typeof p === 'object') {
+                    participantName = p.name || p.displayName || p.id || 'Unknown';
+                }
+                if (participantName && participantName !== 'Unknown') {
+                    uniqueParticipants.add(participantName);
+                }
+            });
+        }
+    });
 
     // Calculate daily averages
     const dailyTime = {};
@@ -490,13 +534,25 @@ function renderCollaboratorsChart() {
     
     // Calculate meetings and total duration for each participant
     filteredMeetings.forEach(meeting => {
-        meeting.participants.forEach(p => {
-            if (!participantData[p]) {
-                participantData[p] = { meetings: 0, totalDuration: 0 };
-            }
-            participantData[p].meetings += 1;
-            participantData[p].totalDuration += (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0);
-        });
+        if (meeting.participants && Array.isArray(meeting.participants)) {
+            meeting.participants.forEach(p => {
+                // Handle different participant data formats
+                let participantName = '';
+                if (typeof p === 'string') {
+                    participantName = p;
+                } else if (p && typeof p === 'object') {
+                    participantName = p.name || p.displayName || p.id || 'Unknown';
+                }
+                
+                if (participantName && participantName !== 'Unknown') {
+                    if (!participantData[participantName]) {
+                        participantData[participantName] = { meetings: 0, totalDuration: 0 };
+                    }
+                    participantData[participantName].meetings += 1;
+                    participantData[participantName].totalDuration += (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0);
+                }
+            });
+        }
     });
     
     // Sort by meeting count to find the user (top participant), then sort collaborators by TIME
@@ -844,10 +900,23 @@ function updateDetailedStats() {
 function updateParticipantsSummary() {
     const container = document.getElementById('frequent-participants');
     const participantCounts = {};
+    
     filteredMeetings.forEach(m => {
-        m.participants.forEach(p => {
-            participantCounts[p] = (participantCounts[p] || 0) + 1;
-        });
+        if (m.participants && Array.isArray(m.participants)) {
+            m.participants.forEach(p => {
+                // Handle different participant data formats
+                let participantName = '';
+                if (typeof p === 'string') {
+                    participantName = p;
+                } else if (p && typeof p === 'object') {
+                    participantName = p.name || p.displayName || p.id || 'Unknown';
+                }
+                
+                if (participantName && participantName !== 'Unknown') {
+                    participantCounts[participantName] = (participantCounts[participantName] || 0) + 1;
+                }
+            });
+        }
     });
 
     const sorted = Object.entries(participantCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
@@ -907,7 +976,24 @@ function updateMeetingsTable() {
     tbody.innerHTML = sorted.map((m, index) => {
         const duration = m.endTime ? formatDuration(m.endTime - m.startTime) : 'Ongoing';
         const efficiency = calculateEfficiencyScore(m);
-        const participants = m.participants.slice(0, 3).join(', ') + (m.participants.length > 3 ? ` (+${m.participants.length - 3})` : '');
+        
+        // Handle participant display with proper name extraction
+        const participantNames = [];
+        if (m.participants && Array.isArray(m.participants)) {
+            m.participants.forEach(p => {
+                let participantName = '';
+                if (typeof p === 'string') {
+                    participantName = p;
+                } else if (p && typeof p === 'object') {
+                    participantName = p.name || p.displayName || p.id || 'Unknown';
+                }
+                if (participantName && participantName !== 'Unknown') {
+                    participantNames.push(participantName);
+                }
+            });
+        }
+        
+        const participants = participantNames.slice(0, 3).join(', ') + (participantNames.length > 3 ? ` (+${participantNames.length - 3})` : '');
         const title = m.title || `Meeting ${m.id}`;
         const shortTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
         
@@ -916,7 +1002,7 @@ function updateMeetingsTable() {
                 <td>${new Date(m.startTime).toLocaleString()}</td>
                 <td class="meeting-title" title="${escapeHtml(title)}">${escapeHtml(shortTitle)}</td>
                 <td>${duration}</td>
-                <td class="meeting-participants" title="${escapeHtml(m.participants.join(', '))}">${escapeHtml(participants)}</td>
+                <td class="meeting-participants" title="${escapeHtml(participantNames.join(', '))}">${escapeHtml(participants)}</td>
                 <td>${efficiency}</td>
                 <td>
                     <button class="view-details" data-meeting-id="${m.id}">Details</button>
@@ -1006,7 +1092,15 @@ function showMeetingDetails(meetingId) {
         <div>
             <strong>Participants (${meeting.participants.length}):</strong><br>
             <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
-                ${meeting.participants.map(p => `<span style="background: #333; padding: 4px 8px; border-radius: 4px;">${escapeHtml(p)}</span>`).join('')}
+                ${meeting.participants.map(p => {
+                    let participantName = '';
+                    if (typeof p === 'string') {
+                        participantName = p;
+                    } else if (p && typeof p === 'object') {
+                        participantName = p.name || p.displayName || p.id || 'Unknown';
+                    }
+                    return `<span style="background: #333; padding: 4px 8px; border-radius: 4px;">${escapeHtml(participantName)}</span>`;
+                }).join('')}
             </div>
         </div>
     `;

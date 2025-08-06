@@ -89,12 +89,24 @@ function getCurrentMeetingState() {
                     
                     if (activeTab && activeTab.url && activeTab.url.includes('meet.google.com')) {
                         // Send message to content script for detailed state
-                        chrome.tabs.sendMessage(activeTab.id, { action: 'getMeetingState' }, (response) => {
+                        chrome.tabs.sendMessage(activeTab.id, { type: 'get_meeting_state' }, (response) => {
                             if (chrome.runtime.lastError) {
                                 // Content script not ready or tab not accessible
                                 resolve({ state: 'none', participants: [], currentMeeting: null });
+                            } else if (response && response.meetingState) {
+                                // Convert network-based response format to expected format
+                                const convertedState = {
+                                    state: response.meetingState.isActive ? 'active' : 'none',
+                                    participants: response.participants || [],
+                                    currentMeeting: response.meetingState.isActive ? {
+                                        id: response.meetingState.meetingId,
+                                        title: response.meetingState.meetingTitle,
+                                        startTime: response.meetingState.startTime
+                                    } : null
+                                };
+                                resolve(convertedState);
                             } else {
-                                resolve(response || { state: 'none', participants: [], currentMeeting: null });
+                                resolve({ state: 'none', participants: [], currentMeeting: null });
                             }
                         });
                     } else {
@@ -152,22 +164,50 @@ function updateCurrentMeetingInfo(meeting, participants) {
         const startTime = new Date(meeting.startTime);
         const now = new Date();
         const durationMs = now - startTime;
-        const minutes = Math.floor(durationMs / (1000 * 60));
+        
+        console.log('Duration calculation:', {
+            startTime: startTime.toISOString(),
+            now: now.toISOString(),
+            durationMs,
+            durationMinutes: Math.floor(durationMs / (1000 * 60))
+        });
         
         startElement.textContent = startTime.toLocaleTimeString();
         durationElement.textContent = formatDuration(durationMs);
         currentDuration.textContent = `Active for ${formatDuration(durationMs)}`;
         
-        // Display participants as chips
-        const uniqueParticipants = [...new Set(participants)].filter(p => p && p.trim().length > 0);
+        // Display participants as chips with better filtering for consistency
+        const participantNames = participants ? participants.map(p => {
+            // Handle different participant data formats
+            if (typeof p === 'string') {
+                return p.trim();
+            } else if (p && typeof p === 'object') {
+                return p.name || p.displayName || p.id || 'Unknown';
+            } else {
+                return String(p || 'Unknown');
+            }
+        }).filter(name => {
+            // Filter out invalid names and duplicates
+            return name && 
+                   name.length > 0 && 
+                   name !== 'Unknown' && 
+                   name !== 'undefined' &&
+                   !name.includes('undefined');
+        }) : [];
+        
+        // Remove duplicates and sort for consistency
+        const uniqueParticipants = [...new Set(participantNames)].sort();
+        
         if (uniqueParticipants.length > 0) {
-            const participantChips = uniqueParticipants.map(p => 
-                `<span class="participants-chip">${escapeHtml(p)}</span>`
+            const participantChips = uniqueParticipants.map(name => 
+                `<span class="participants-chip">${escapeHtml(name)}</span>`
             ).join('');
             currentParticipants.innerHTML = `<div style="margin-bottom: 4px; color: #9aa0a6; font-size: 11px;">${uniqueParticipants.length} participants:</div>${participantChips}`;
         } else {
             currentParticipants.innerHTML = '<div style="color: #9aa0a6; font-size: 11px;">No participants detected</div>';
         }
+    } else {
+        console.log('Meeting info missing:', { meeting, hasStartTime: meeting?.startTime });
     }
 }
 
