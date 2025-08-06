@@ -46,7 +46,16 @@
   
   "web_accessible_resources": [
     {
-      "resources": ["dashboard.html", "dashboard.css", "dashboard.js", "apexcharts.min.js"],
+      "resources": [
+        "dashboard.html", 
+        "dashboard.css", 
+        "dashboard.js", 
+        "apexcharts.min.js",
+        "jquery-3.6.0.min.js",
+        "moment.min.js",
+        "daterangepicker.js",
+        "daterangepicker.css"
+      ],
       "matches": ["<all_urls>"]
     }
   ],

@@ -44,14 +44,97 @@ function loadMeetings() {
 }
 
 function initializeFilters() {
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30);
+    console.log('Initializing filters...');
+    console.log('jQuery available:', typeof $ !== 'undefined');
+    console.log('moment available:', typeof moment !== 'undefined');
+    console.log('daterangepicker available:', typeof $ !== 'undefined' && $.fn.daterangepicker);
     
-    document.getElementById('start-date').value = startDate.toISOString().split('T')[0];
-    document.getElementById('end-date').value = endDate.toISOString().split('T')[0];
+    // Wait for DOM to be fully ready and libraries to load
+    setTimeout(() => {
+        const dateRangeInput = document.getElementById('daterange');
+        if (!dateRangeInput) {
+            console.error('daterange input element not found!');
+            return;
+        }
+        
+        // Initialize the date range picker with presets
+        if (typeof $ !== 'undefined' && typeof moment !== 'undefined' && $.fn.daterangepicker) {
+            console.log('Initializing daterangepicker...');
+            
+            try {
+                $('#daterange').daterangepicker({
+                    opens: 'left',
+                    drops: 'down',
+                    showDropdowns: true,
+                    ranges: {
+                        'Today': [moment(), moment()],
+                        'Yesterday': [moment().subtract(1, 'days'), moment().subtract(1, 'days')],
+                        'Last 7 Days': [moment().subtract(6, 'days'), moment()],
+                        'Last 30 Days': [moment().subtract(29, 'days'), moment()],
+                        'Last 90 Days': [moment().subtract(89, 'days'), moment()],
+                        'This Month': [moment().startOf('month'), moment().endOf('month')],
+                        'Last Month': [moment().subtract(1, 'month').startOf('month'), moment().subtract(1, 'month').endOf('month')],
+                        'All Time': [moment().subtract(1, 'years'), moment()]
+                    },
+                    startDate: moment().subtract(29, 'days'),
+                    endDate: moment(),
+                    locale: {
+                        format: 'MMM DD, YYYY'
+                    },
+                    alwaysShowCalendars: true
+                }, function(start, end, label) {
+                    console.log('Date range selected:', start.format('YYYY-MM-DD'), 'to', end.format('YYYY-MM-DD'), '(' + label + ')');
+                    // Auto-apply filters when date changes
+                    applyFilters();
+                });
+                
+                console.log('Daterangepicker initialized successfully');
+                
+                // Set initial display text
+                const picker = $('#daterange').data('daterangepicker');
+                if (picker) {
+                    $('#daterange').val(picker.startDate.format('MMM DD, YYYY') + ' - ' + picker.endDate.format('MMM DD, YYYY'));
+                }
+                
+            } catch (error) {
+                console.error('Error initializing daterangepicker:', error);
+                setupFallbackDateInputs();
+            }
+        } else {
+            console.warn('jQuery, moment, or daterangepicker not loaded. Available:', {
+                jquery: typeof $ !== 'undefined',
+                moment: typeof moment !== 'undefined', 
+                daterangepicker: typeof $ !== 'undefined' && $.fn.daterangepicker
+            });
+            setupFallbackDateInputs();
+        }
+    }, 100); // Small delay to ensure everything is loaded
     
     populateParticipantFilter();
+}
+
+function setupFallbackDateInputs() {
+    console.log('Setting up fallback date inputs');
+    const dateRangeInput = document.getElementById('daterange');
+    if (dateRangeInput) {
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - 30);
+        
+        dateRangeInput.type = 'text';
+        dateRangeInput.value = `${startDate.toLocaleDateString()} - ${endDate.toLocaleDateString()}`;
+        dateRangeInput.readOnly = false;
+        dateRangeInput.placeholder = 'Click to select date range';
+        
+        // Make it clickable for manual entry
+        dateRangeInput.addEventListener('click', () => {
+            const newRange = prompt('Enter date range (format: MM/DD/YYYY - MM/DD/YYYY):', dateRangeInput.value);
+            if (newRange) {
+                dateRangeInput.value = newRange;
+                applyFilters();
+            }
+        });
+    }
 }
 
 function populateParticipantFilter() {
@@ -105,8 +188,19 @@ function setDateRange(days) {
 }
 
 function applyFilters() {
-    const startDate = document.getElementById('start-date').value;
-    const endDate = document.getElementById('end-date').value;
+    let startDate, endDate;
+    
+    // Get date range from daterangepicker if available
+    if (typeof $ !== 'undefined' && $('#daterange').data('daterangepicker')) {
+        const picker = $('#daterange').data('daterangepicker');
+        startDate = picker.startDate.format('YYYY-MM-DD');
+        endDate = picker.endDate.format('YYYY-MM-DD');
+    } else {
+        // Fallback to basic date inputs
+        startDate = document.getElementById('start-date')?.value;
+        endDate = document.getElementById('end-date')?.value;
+    }
+    
     const selectedParticipant = document.getElementById('participant-select').value;
 
     filteredMeetings = allMeetings.filter(meeting => {
@@ -470,7 +564,7 @@ function updateMeetingsTable() {
     countEl.textContent = `${filteredMeetings.length} meetings`;
 
     if (filteredMeetings.length === 0) {
-        tbody.innerHTML = '<tr class="loading-row"><td colspan="5">No meetings found</td></tr>';
+        tbody.innerHTML = '<tr class="loading-row"><td colspan="6">No meetings found</td></tr>';
         return;
     }
 
@@ -479,9 +573,13 @@ function updateMeetingsTable() {
         const duration = m.endTime ? formatDuration(m.endTime - m.startTime) : 'Ongoing';
         const efficiency = m.participants.length ? ((m.endTime - m.startTime) / 3600000 / m.participants.length).toFixed(2) : 'N/A';
         const participants = m.participants.slice(0, 3).join(', ') + (m.participants.length > 3 ? ` (+${m.participants.length - 3})` : '');
+        const title = m.title || `Meeting ${m.id}`;
+        const shortTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
+        
         return `
             <tr>
                 <td>${new Date(m.startTime).toLocaleString()}</td>
+                <td class="meeting-title" title="${escapeHtml(title)}">${escapeHtml(shortTitle)}</td>
                 <td>${duration}</td>
                 <td class="meeting-participants" title="${escapeHtml(m.participants.join(', '))}">${escapeHtml(participants)}</td>
                 <td>${efficiency}</td>
@@ -501,6 +599,7 @@ function showMeetingDetails(meetingId) {
     const duration = meeting.endTime ? formatDuration(meeting.endTime - meeting.startTime) : 'Ongoing';
     
     modalBody.innerHTML = `
+        ${meeting.title ? `<div style="margin-bottom: 1rem;"><strong>Title:</strong> ${escapeHtml(meeting.title)}</div>` : ''}
         <div style="margin-bottom: 1rem;">
             <strong>URL:</strong> <a href="${meeting.url}" target="_blank" style="color: #1a73e8;">${meeting.url}</a>
         </div>
@@ -528,9 +627,10 @@ function exportData() {
         alert('No data to export');
         return;
     }
-    const headers = ['ID', 'URL', 'Start Time', 'End Time', 'Duration (min)', 'Participants'];
+    const headers = ['ID', 'Title', 'URL', 'Start Time', 'End Time', 'Duration (min)', 'Participants'];
     const rows = filteredMeetings.map(m => [
         m.id,
+        `"${(m.title || `Meeting ${m.id}`).replace(/"/g, '""')}"`, // Escape quotes in title
         m.url,
         new Date(m.startTime).toISOString(),
         m.endTime ? new Date(m.endTime).toISOString() : '',
@@ -579,6 +679,12 @@ function showError(message) {
 // Mock data for development when not in extension context
 function generateMockData() {
     const participants = ['Alice', 'Bob', 'Charlie', 'David', 'Eve', 'Frank', 'Grace', 'Heidi'];
+    const meetingTitles = [
+        'Weekly Team Standup', 'Project Planning Session', 'Client Presentation', 'Sprint Review',
+        'Design Review', 'Code Review Meeting', 'Marketing Strategy', 'Sales Update',
+        'Product Demo', 'Brainstorming Session', 'One-on-One Meeting', 'Board Meeting',
+        'Training Session', 'Architecture Discussion', 'Bug Triage', 'Release Planning'
+    ];
     const data = [];
     for (let i = 0; i < 100; i++) {
         const start = new Date(Date.now() - Math.random() * 90 * 24 * 3600 * 1000);
@@ -586,6 +692,7 @@ function generateMockData() {
         const end = new Date(start.getTime() + duration);
         data.push({
             id: `mock-${i}`,
+            title: meetingTitles[Math.floor(Math.random() * meetingTitles.length)],
             url: `https://meet.google.com/mock-${i}`,
             startTime: start.getTime(),
             endTime: end.getTime(),

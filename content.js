@@ -448,12 +448,64 @@
         return name.trim();
     }
 
+    // Extract meeting title from the page
+    function getMeetingTitle() {
+        // Try multiple approaches to get the meeting title
+        
+        // Method 1: Look for the meeting title in the document title
+        if (document.title && document.title !== 'Google Meet' && !document.title.includes('Meet - ')) {
+            const titleMatch = document.title.match(/^(.+?) - Google Meet$/);
+            if (titleMatch) {
+                return titleMatch[1].trim();
+            }
+        }
+        
+        // Method 2: Look for meeting info in the UI
+        const meetingInfoSelectors = [
+            '[data-meeting-title]',
+            '[aria-label*="meeting"][aria-label*="title"]',
+            '.meeting-title',
+            '.call-title',
+            '[jsname="r4nke"]', // Meeting info panel
+            '[jsname="JAPqpe"]' // Alternative meeting info
+        ];
+        
+        for (let selector of meetingInfoSelectors) {
+            const element = document.querySelector(selector);
+            if (element && element.textContent && element.textContent.trim()) {
+                const title = element.textContent.trim();
+                if (title.length > 2 && title.length < 200) {
+                    return title;
+                }
+            }
+        }
+        
+        // Method 3: Look in the more info panel or settings
+        const infoButtons = document.querySelectorAll('[aria-label*="info"], [aria-label*="details"]');
+        // This would require clicking the info button to get the title, which might be intrusive
+        
+        // Method 4: Try to extract from URL parameters or hash
+        const urlParams = new URLSearchParams(window.location.search);
+        const titleFromUrl = urlParams.get('title') || urlParams.get('name');
+        if (titleFromUrl) {
+            return decodeURIComponent(titleFromUrl);
+        }
+        
+        // Fallback: Use meeting code as title
+        const meetingCode = window.location.pathname.match(/\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/)?.[1];
+        return meetingCode ? `Meeting ${meetingCode}` : 'Untitled Meeting';
+    }
+
     // Start a new meeting session
     function startMeetingSession() {
         console.log('Meeting started');
         
+        const title = getMeetingTitle();
+        console.log('Detected meeting title:', title);
+        
         currentMeeting = {
             id: generateMeetingId(),
+            title: title,
             url: window.location.href,
             startTime: Date.now(),
             endTime: null,

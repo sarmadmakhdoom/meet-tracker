@@ -20,18 +20,25 @@ body {
     flex-direction: column;
 }
 
-/* Header */
-.header {
-    background: linear-gradient(135deg, #1a73e8 0%, #34a853 100%);
+/* Header - Dark Theme */
+.header.dark-header {
+    background: #1f1f1f;
     color: white;
     padding: 1.5rem 0;
     box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    border-bottom: 1px solid #333;
 }
 
 .header-content {
     max-width: 1400px;
     margin: 0 auto;
     padding: 0 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.title-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -43,9 +50,7 @@ body {
     font-size: 1.8rem;
     font-weight: 600;
     margin: 0;
-    background: linear-gradient(45deg, #fff, #e8f0fe);
-    background-clip: text;
-    -webkit-background-clip: text;
+    color: #e8eaed;
 }
 
 .header-stats {
@@ -58,9 +63,9 @@ body {
     text-align: center;
     min-width: 100px;
     padding: 0.8rem;
-    background: rgba(255,255,255,0.1);
+    background: rgba(26, 115, 232, 0.1);
     border-radius: 10px;
-    backdrop-filter: blur(10px);
+    border: 1px solid rgba(26, 115, 232, 0.2);
 }
 
 .stat-value {
@@ -68,13 +73,111 @@ body {
     font-size: 1.6rem;
     font-weight: 700;
     margin-bottom: 0.2rem;
-    color: #fff;
+    color: #1a73e8;
 }
 
 .stat-label {
     font-size: 0.75rem;
-    opacity: 0.9;
-    color: #e8f0fe;
+    color: #9aa0a6;
+}
+
+/* Filters Row in Header */
+.filters-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid #333;
+    flex-wrap: wrap;
+}
+
+.filters-row .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+}
+
+.filters-row .filter-group.actions {
+    margin-left: auto;
+    gap: 0.75rem;
+}
+
+.filters-row .filter-label {
+    font-size: 0.9rem;
+    color: #9aa0a6;
+    min-width: auto;
+    font-weight: 500;
+}
+
+.daterangepicker-input {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: #e8eaed;
+    font-size: 0.85rem;
+    width: 200px;
+    outline: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.daterangepicker-input:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.participant-dropdown {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: #e8eaed;
+    font-size: 0.85rem;
+    min-width: 160px;
+    outline: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.participant-dropdown:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.filters-row .btn-primary,
+.filters-row .btn-secondary {
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+}
+
+.filters-row .btn-primary {
+    background: #1a73e8;
+    color: white;
+}
+
+.filters-row .btn-primary:hover {
+    background: #1557b0;
+    transform: translateY(-1px);
+}
+
+.filters-row .btn-secondary {
+    background: #333;
+    color: #e8eaed;
+    border: 1px solid #555;
+}
+
+.filters-row .btn-secondary:hover {
+    background: #444;
+    color: #fff;
+    transform: translateY(-1px);
 }
 
 /* Filters */
@@ -84,13 +187,140 @@ body {
     padding: 0 2rem;
     background: #1f1f1f;
     border-radius: 16px;
-    padding: 2rem;
+    padding: 1.5rem;
     box-shadow: 0 4px 20px rgba(0,0,0,0.2);
     border: 1px solid #333;
+}
+
+/* Compact filters layout */
+.compact-filters .filter-row {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+}
+
+.filter-group.actions {
+    margin-left: auto;
+    gap: 0.5rem;
+}
+
+.filter-label {
+    font-size: 1.1rem;
+    color: #9aa0a6;
+    min-width: 22px;
+    text-align: center;
+}
+
+/* Date range picker */
+.date-range-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.date-separator {
+    color: #9aa0a6;
+    font-size: 0.9rem;
+    margin: 0 0.25rem;
+}
+
+.date-range-picker input {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: #e8eaed;
+    font-size: 0.85rem;
+    width: 110px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.date-range-picker input:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+/* Quick filters - compact version */
+.compact-filters .quick-filters {
+    display: flex;
+    gap: 0.25rem;
+}
+
+.compact-filters .quick-filter.icon-btn {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: #e8eaed;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    min-width: 36px;
+    text-align: center;
+}
+
+.compact-filters .quick-filter.icon-btn:hover {
+    background: #444;
+    border-color: #1a73e8;
+    color: #ffffff;
+    transform: translateY(-1px);
+}
+
+.compact-filters .quick-filter.icon-btn.active {
+    background: #1a73e8;
+    border-color: #1a73e8;
+    color: #ffffff;
+}
+
+/* Participant select - compact */
+.compact-filters #participant-select {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: #e8eaed;
+    font-size: 0.85rem;
+    min-width: 160px;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.compact-filters #participant-select:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+/* Action buttons - compact */
+.compact-filters .icon-btn {
+    padding: 0.5rem 0.9rem;
+    font-size: 0.8rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+/* Legacy filter styles for backwards compatibility */
+.filters:not(.compact-filters) {
     display: grid;
     grid-template-columns: 1fr 1fr auto;
     gap: 2rem;
     align-items: start;
+    padding: 2rem;
 }
 
 .filter-section h3 {
@@ -435,6 +665,16 @@ button {
     white-space: nowrap;
 }
 
+.meeting-title {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 500;
+    color: #1a73e8;
+    cursor: help;
+}
+
 .view-details {
     padding: 0.5rem 1rem;
     font-size: 0.8rem;
@@ -551,6 +791,75 @@ button {
     padding: 3rem;
     color: #9aa0a6;
     font-style: italic;
+}
+
+/* Dark theme for daterangepicker */
+.daterangepicker {
+    background: #1f1f1f !important;
+    border: 1px solid #333 !important;
+    color: #e8eaed !important;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4) !important;
+}
+
+.daterangepicker td, .daterangepicker th {
+    color: #e8eaed !important;
+    background: #1f1f1f !important;
+}
+
+.daterangepicker td.available:hover, .daterangepicker th.available:hover {
+    background: #2d2d2d !important;
+    color: #ffffff !important;
+}
+
+.daterangepicker td.active, .daterangepicker td.active:hover {
+    background: #1a73e8 !important;
+    color: #ffffff !important;
+}
+
+.daterangepicker td.in-range {
+    background: rgba(26, 115, 232, 0.2) !important;
+    color: #e8eaed !important;
+}
+
+.daterangepicker .ranges li {
+    color: #e8eaed !important;
+}
+
+.daterangepicker .ranges li:hover {
+    background: #2d2d2d !important;
+    color: #ffffff !important;
+}
+
+.daterangepicker .ranges li.active {
+    background: #1a73e8 !important;
+    color: #ffffff !important;
+}
+
+.daterangepicker select {
+    background: #2d2d2d !important;
+    border: 1px solid #444 !important;
+    color: #e8eaed !important;
+}
+
+.daterangepicker .calendar-table {
+    background: #1f1f1f !important;
+    border: 1px solid #333 !important;
+}
+
+.daterangepicker .drp-buttons {
+    border-top: 1px solid #333 !important;
+}
+
+.daterangepicker .drp-buttons .btn {
+    background: #333 !important;
+    border: 1px solid #555 !important;
+    color: #e8eaed !important;
+}
+
+.daterangepicker .drp-buttons .btn.btn-primary {
+    background: #1a73e8 !important;
+    border-color: #1a73e8 !important;
+    color: #ffffff !important;
 }
 
 /* Custom scrollbar */

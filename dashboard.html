@@ -4,70 +4,68 @@
     <meta charset="utf-8">
     <title>Google Meet Tracker - Dashboard</title>
     <link rel="stylesheet" href="dashboard.css">
+    <link rel="stylesheet" href="daterangepicker.css">
+    <!-- Load dependencies in correct order -->
+    <script src="jquery-3.6.0.min.js"></script>
+    <script src="moment.min.js"></script>
+    <script src="daterangepicker.js"></script>
 </head>
 <body>
     <div class="dashboard-container">
-        <header class="header">
+        <header class="header dark-header">
             <div class="header-content">
-                <div class="header-title">
-                    <h1>📊 Google Meet Analytics</h1>
+                <!-- Title Row -->
+                <div class="title-row">
+                    <div class="header-title">
+                        <h1>📊 Google Meet Analytics</h1>
+                    </div>
+                    <div class="header-stats">
+                        <div class="stat">
+                            <span class="stat-value" id="total-meetings">0</span>
+                            <span class="stat-label">Total Meetings</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="total-time">0h</span>
+                            <span class="stat-label">Total Time</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="unique-participants">0</span>
+                            <span class="stat-label">Unique People</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="avg-daily-time">0h</span>
+                            <span class="stat-label">Avg Daily Time</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="work-percentage">0%</span>
+                            <span class="stat-label">% of Work Day</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="header-stats">
-                    <div class="stat">
-                        <span class="stat-value" id="total-meetings">0</span>
-                        <span class="stat-label">Total Meetings</span>
+                
+                <!-- Filters Row -->
+                <div class="filters-row">
+                    <div class="filter-group">
+                        <label class="filter-label">📅 Date Range</label>
+                        <input type="text" id="daterange" class="daterangepicker-input" readonly />
                     </div>
-                    <div class="stat">
-                        <span class="stat-value" id="total-time">0h</span>
-                        <span class="stat-label">Total Time</span>
+                    
+                    <div class="filter-group">
+                        <label class="filter-label">👥 Participants</label>
+                        <select id="participant-select" class="participant-dropdown">
+                            <option value="">All participants</option>
+                        </select>
                     </div>
-                    <div class="stat">
-                        <span class="stat-value" id="unique-participants">0</span>
-                        <span class="stat-label">Unique People</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-value" id="avg-daily-time">0h</span>
-                        <span class="stat-label">Avg Daily Time</span>
-                    </div>
-                    <div class="stat">
-                        <span class="stat-value" id="work-percentage">0%</span>
-                        <span class="stat-label">% of Work Day</span>
+                    
+                    <div class="filter-group actions">
+                        <button id="apply-filters" class="btn-primary">Apply Filters</button>
+                        <button id="clear-filters" class="btn-secondary">Clear</button>
+                        <button id="export-data" class="btn-secondary">📄 Export CSV</button>
                     </div>
                 </div>
             </div>
         </header>
 
-        <div class="filters">
-            <div class="filter-section">
-                <h3>📅 Date Range</h3>
-                <div class="date-inputs">
-                    <input type="date" id="start-date" />
-                    <span>to</span>
-                    <input type="date" id="end-date" />
-                </div>
-                <div class="quick-filters">
-                    <button class="quick-filter" data-days="7">Last 7 days</button>
-                    <button class="quick-filter" data-days="30">Last 30 days</button>
-                    <button class="quick-filter" data-days="90">Last 90 days</button>
-                    <button class="quick-filter active" data-days="all">All time</button>
-                </div>
-            </div>
-
-            <div class="filter-section">
-                <h3>👥 Participant Filter</h3>
-                <div class="participant-filter">
-                    <select id="participant-select">
-                        <option value="">All participants</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="filter-actions">
-                <button id="apply-filters" class="btn-primary">Apply Filters</button>
-                <button id="clear-filters" class="btn-secondary">Clear</button>
-                <button id="export-data" class="btn-secondary">📄 Export CSV</button>
-            </div>
-        </div>
 
         <div class="dashboard-content">
             <!-- Top Row: Main Analytics -->
@@ -157,6 +155,7 @@
                         <thead>
                             <tr>
                                 <th>Date & Time</th>
+                                <th>Title</th>
                                 <th>Duration</th>
                                 <th>Participants</th>
                                 <th>Efficiency Score</th>
@@ -165,7 +164,7 @@
                         </thead>
                         <tbody id="meetings-table-body">
                             <tr class="loading-row">
-                                <td colspan="5">Loading meetings...</td>
+                                <td colspan="6">Loading meetings...</td>
                             </tr>
                         </tbody>
                     </table>
