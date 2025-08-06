@@ -94,6 +94,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse(result);
                     break;
                     
+                case 'logMinuteData':
+                    await handleMinuteDataLog(request.data, sender);
+                    sendResponse({ success: true });
+                    break;
+                    
                 case 'getNetworkStats':
                     sendResponse({
                         networkParticipants: currentMeetingState.networkParticipants,
@@ -161,10 +166,19 @@ async function handleMeetingUpdate(meeting, minuteData, sender) {
 
 // Enhanced meeting ended handler  
 async function handleMeetingEnded(meeting, sender) {
-    console.log('🚫 Meeting ended:', meeting.title);
+    console.log('🚫 Meeting ended:', meeting.title || meeting.id);
     
-    // Save final meeting data
-    await saveMeeting(meeting);
+    // Ensure the meeting has proper endTime
+    const finalMeeting = {
+        ...meeting,
+        endTime: meeting.endTime || Date.now() // Set endTime if not already set
+    };
+    
+    const duration = finalMeeting.endTime - finalMeeting.startTime;
+    console.log(`📊 Meeting duration: ${Math.round(duration / 60000)} minutes`);
+    
+    // Save final meeting data with endTime
+    await saveMeeting(finalMeeting);
     
     // Reset state
     currentMeetingState = {
@@ -267,6 +281,53 @@ async function handleMeetingStateUpdate(data, sender) {
             // Meeting ended
             await handleMeetingEnded(currentMeetingState.currentMeeting, sender);
         }
+    }
+}
+
+// Handle minute data logging from content script
+async function handleMinuteDataLog(minuteData, sender) {
+    console.log(`⏰ Minute ${minuteData.minute}: ${minuteData.participantCount} participants in ${minuteData.meetingId}`);
+    
+    const meetings = await getMeetings();
+    const meetingIndex = meetings.findIndex(m => m.id === minuteData.meetingId);
+    
+    if (meetingIndex >= 0) {
+        const meeting = meetings[meetingIndex];
+        
+        // Initialize minute logs if not exists
+        if (!meeting.minuteLogs) {
+            meeting.minuteLogs = [];
+        }
+        
+        // Add or update minute log
+        const existingLogIndex = meeting.minuteLogs.findIndex(log => log.minute === minuteData.minute);
+        
+        const logEntry = {
+            minute: minuteData.minute,
+            timestamp: minuteData.timestamp,
+            participants: minuteData.participants,
+            participantCount: minuteData.participantCount,
+            cumulativeDuration: minuteData.cumulativeDuration
+        };
+        
+        if (existingLogIndex >= 0) {
+            meeting.minuteLogs[existingLogIndex] = logEntry;
+        } else {
+            meeting.minuteLogs.push(logEntry);
+        }
+        
+        // Update meeting's current duration and participant info
+        meeting.currentDuration = minuteData.cumulativeDuration;
+        meeting.lastUpdated = minuteData.timestamp;
+        meeting.participants = minuteData.participants;
+        
+        // Save updated meeting
+        meetings[meetingIndex] = meeting;
+        await saveMeetings(meetings);
+        
+        console.log(`💾 Minute ${minuteData.minute} data logged for meeting ${minuteData.meetingId}`);
+    } else {
+        console.warn(`⚠️ Meeting ${minuteData.meetingId} not found for minute logging`);
     }
 }
 

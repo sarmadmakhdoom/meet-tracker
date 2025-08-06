@@ -942,7 +942,17 @@ function updateRecentMeetings() {
         return;
     }
     container.innerHTML = recent.map(m => {
-        const duration = m.endTime ? formatDuration(m.endTime - m.startTime) : 'Ongoing';
+        // Calculate real-time duration for ongoing meetings
+        let duration;
+        if (m.endTime) {
+            duration = formatDuration(m.endTime - m.startTime);
+        } else if (m.currentDuration) {
+            // Use currentDuration from minute logs
+            duration = formatDuration(m.currentDuration) + ' (ongoing)';
+        } else {
+            // Fallback: calculate from start time
+            duration = formatDuration(Date.now() - m.startTime) + ' (ongoing)';
+        }
         return `
             <div class="meeting-item" data-meeting-id="${m.id}">
                 <div class="meeting-info">
@@ -974,7 +984,17 @@ function updateMeetingsTable() {
 
     const sorted = [...filteredMeetings].sort((a, b) => b.startTime - a.startTime);
     tbody.innerHTML = sorted.map((m, index) => {
-        const duration = m.endTime ? formatDuration(m.endTime - m.startTime) : 'Ongoing';
+        // Calculate real-time duration for ongoing meetings in table
+        let duration;
+        if (m.endTime) {
+            duration = formatDuration(m.endTime - m.startTime);
+        } else if (m.currentDuration) {
+            // Use currentDuration from minute logs
+            duration = formatDuration(m.currentDuration) + ' (ongoing)';
+        } else {
+            // Fallback: calculate from start time
+            duration = formatDuration(Date.now() - m.startTime) + ' (ongoing)';
+        }
         const efficiency = calculateEfficiencyScore(m);
         
         // Handle participant display with proper name extraction

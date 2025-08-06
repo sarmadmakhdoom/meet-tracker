@@ -13,6 +13,8 @@ class SimpleMeetTracker {
       meetingTitle: null
     };
     this.lastUpdate = Date.now();
+    this.minuteTrackingInterval = null;
+    this.lastMinuteLogged = null;
     
     this.init();
   }
@@ -187,11 +189,29 @@ class SimpleMeetTracker {
         meetingTitle: this.getMeetingTitle()
       };
       console.log(`[SimpleMeetTracker] Meeting started: ${this.meetingState.meetingTitle} at ${new Date(startTime).toLocaleTimeString()}`);
+      
+      // Send meeting start to background
+      this.sendMeetingStateToBackground('started');
+      
+      // Start continuous minute tracking
+      this.startMinuteTracking();
     } else if (!isActive && this.meetingState.isActive) {
       // Meeting ended
+      const endTime = Date.now();
       this.meetingState.isActive = false;
-      this.meetingState.endTime = Date.now();
-      console.log('[SimpleMeetTracker] Meeting ended');
+      this.meetingState.endTime = endTime;
+      
+      const duration = endTime - this.meetingState.startTime;
+      console.log(`[SimpleMeetTracker] Meeting ended after ${Math.round(duration / 60000)} minutes`);
+      
+      // Send meeting end to background with final meeting data
+      this.sendMeetingStateToBackground('ended');
+      
+      // Stop minute tracking
+      this.stopMinuteTracking();
+      
+      // Clear participants since meeting ended
+      this.participants.clear();
     }
 
     // Update meeting title if it changed
@@ -255,6 +275,51 @@ class SimpleMeetTracker {
     }
   }
 
+  sendMeetingStateToBackground(eventType) {
+    // Check if chrome runtime is available
+    if (!chrome?.runtime?.id) {
+      console.log('[SimpleMeetTracker] Extension context invalidated, skipping meeting state update');
+      return;
+    }
+
+    const meetingData = {
+      id: this.meetingState.meetingId,
+      title: this.meetingState.meetingTitle,
+      startTime: this.meetingState.startTime,
+      endTime: this.meetingState.endTime,
+      url: window.location.href,
+      participants: Array.from(this.participants.values())
+    };
+
+    try {
+      if (eventType === 'started') {
+        chrome.runtime.sendMessage({
+          type: 'meetingStarted',
+          meeting: meetingData
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.log('[SimpleMeetTracker] Error sending meeting start:', chrome.runtime.lastError.message);
+          } else {
+            console.log('[SimpleMeetTracker] Meeting start sent to background');
+          }
+        });
+      } else if (eventType === 'ended') {
+        chrome.runtime.sendMessage({
+          type: 'meetingEnded',
+          meeting: meetingData
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.log('[SimpleMeetTracker] Error sending meeting end:', chrome.runtime.lastError.message);
+          } else {
+            console.log('[SimpleMeetTracker] Meeting end sent to background');
+          }
+        });
+      }
+    } catch (error) {
+      console.log(`[SimpleMeetTracker] Failed to send meeting ${eventType} to background:`, error.message);
+    }
+  }
+
   setupMessageListener() {
     if (chrome?.runtime?.onMessage) {
       chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -267,6 +332,98 @@ class SimpleMeetTracker {
           return true;
         }
       });
+    }
+  }
+
+  // Minute-by-minute tracking methods
+  startMinuteTracking() {
+    if (this.minuteTrackingInterval) {
+      clearInterval(this.minuteTrackingInterval);
+    }
+    
+    console.log('[SimpleMeetTracker] Starting minute-by-minute tracking');
+    
+    // Log first minute immediately
+    this.logCurrentMinute();
+    
+    // Set up interval to log every minute (60 seconds)
+    this.minuteTrackingInterval = setInterval(() => {
+      if (this.meetingState.isActive) {
+        this.logCurrentMinute();
+        
+        // Check if meeting is still active by scanning for participants
+        this.scanForParticipants();
+        
+        // If no participants found for 2 minutes, assume meeting ended
+        if (this.participants.size === 0 && !this.hasMeetingControls()) {
+          const now = Date.now();
+          const timeSinceLastParticipant = now - (this.lastMinuteLogged || now);
+          
+          if (timeSinceLastParticipant > 2 * 60 * 1000) { // 2 minutes
+            console.log('[SimpleMeetTracker] No participants detected for 2 minutes, ending meeting');
+            this.updateMeetingState(); // This will trigger meeting end
+          }
+        }
+      } else {
+        // Stop tracking if meeting is no longer active
+        this.stopMinuteTracking();
+      }
+    }, 60 * 1000); // Every 60 seconds
+  }
+
+  stopMinuteTracking() {
+    if (this.minuteTrackingInterval) {
+      console.log('[SimpleMeetTracker] Stopping minute-by-minute tracking');
+      clearInterval(this.minuteTrackingInterval);
+      this.minuteTrackingInterval = null;
+    }
+  }
+
+  logCurrentMinute() {
+    if (!this.meetingState.isActive) return;
+    
+    const currentTime = Date.now();
+    const currentMinute = Math.floor((currentTime - this.meetingState.startTime) / 60000); // Minutes since start
+    
+    // Only log if this is a new minute
+    if (currentMinute !== this.lastMinuteLogged) {
+      this.lastMinuteLogged = currentMinute;
+      
+      const minuteData = {
+        meetingId: this.meetingState.meetingId,
+        minute: currentMinute + 1, // 1-based minute numbering
+        timestamp: currentTime,
+        participants: Array.from(this.participants.values()),
+        participantCount: this.participants.size,
+        cumulativeDuration: currentTime - this.meetingState.startTime
+      };
+      
+      console.log(`[SimpleMeetTracker] Minute ${minuteData.minute}: ${minuteData.participantCount} participants`);
+      
+      // Send minute data to background
+      this.sendMinuteDataToBackground(minuteData);
+    }
+  }
+
+  sendMinuteDataToBackground(minuteData) {
+    if (!chrome?.runtime?.id) {
+      console.log('[SimpleMeetTracker] Extension context invalidated, skipping minute data');
+      return;
+    }
+
+    try {
+      chrome.runtime.sendMessage({
+        type: 'logMinuteData',
+        data: minuteData
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.log('[SimpleMeetTracker] Error sending minute data:', chrome.runtime.lastError.message);
+        } else {
+          console.log(`[SimpleMeetTracker] Minute ${minuteData.minute} logged successfully`);
+        }
+      });
+    } catch (error) {
+      console.log('[SimpleMeetTracker] Failed to send minute data:', error.message);
     }
   }
 }
