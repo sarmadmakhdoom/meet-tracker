@@ -527,9 +527,17 @@
         }
     }
 
-    // Generate unique meeting ID
+    // Generate consistent meeting ID based on the Google Meet room code
     function generateMeetingId() {
-        return Date.now().toString(36) + Math.random().toString(36).substr(2);
+        // Extract the meeting room code from the URL (e.g., "abc-defg-hij")
+        const meetingCode = window.location.pathname.match(/\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/)?.[1];
+        if (meetingCode) {
+            // Use just the meeting code as the unique identifier
+            // This ensures the same meeting room always gets the same ID
+            return meetingCode;
+        }
+        // Fallback for non-standard URLs
+        return window.location.pathname.replace(/[^a-z0-9]/gi, '-') || 'unknown-meeting';
     }
 
     // Update extension icon based on meeting state

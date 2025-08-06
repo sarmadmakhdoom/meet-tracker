@@ -14,8 +14,17 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.storage.local.get(['meetings'], (result) => {
         if (!result.meetings) {
             chrome.storage.local.set({ meetings: [] });
+        } else {
+            // Clean up any meetings that shouldn't be ongoing
+            cleanupOrphanedMeetings();
         }
     });
+});
+
+// Also run cleanup when service worker starts up
+chrome.runtime.onStartup.addListener(() => {
+    console.log('Chrome started, cleaning up orphaned meetings');
+    cleanupOrphanedMeetings();
 });
 
 // Handle messages from content script
@@ -64,11 +73,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Handle meeting started
 function handleMeetingStarted(meeting, sender) {
     console.log('Meeting started (active):', meeting);
-    currentMeetingState.currentMeeting = meeting;
-    currentMeetingState.state = 'active';
     
-    // Update icon to active state
-    updateIcon('active', meeting.participants);
+    // First, check if we need to end any previous ongoing meetings
+    chrome.storage.local.get(['meetings'], (result) => {
+        const meetings = result.meetings || [];
+        
+        // Find any ongoing meetings (meetings without endTime)
+        const ongoingMeetings = meetings.filter(m => !m.endTime);
+        
+        if (ongoingMeetings.length > 0) {
+            console.log(`Found ${ongoingMeetings.length} ongoing meetings. Ending them...`);
+            
+            // End all ongoing meetings
+            const now = Date.now();
+            const updatedMeetings = meetings.map(m => {
+                if (!m.endTime) {
+                    return { ...m, endTime: now };
+                }
+                return m;
+            });
+            
+            chrome.storage.local.set({ meetings: updatedMeetings }, () => {
+                console.log('Previous ongoing meetings ended');
+            });
+        }
+        
+        // Now start the new meeting
+        currentMeetingState.currentMeeting = meeting;
+        currentMeetingState.state = 'active';
+        
+        // Update icon to active state
+        updateIcon('active', meeting.participants);
+    });
 }
 
 // Handle meeting update
@@ -251,5 +287,57 @@ function clearAllData(sendResponse) {
     });
 }
 
-// Run cleanup weekly
+// Smart cleanup of meetings that are no longer active based on open tabs
+function cleanupOrphanedMeetings() {
+    chrome.storage.local.get(['meetings'], (result) => {
+        const meetings = result.meetings || [];
+        const ongoingMeetings = meetings.filter(m => !m.endTime);
+        
+        if (ongoingMeetings.length === 0) {
+            console.log('No ongoing meetings to check');
+            return;
+        }
+        
+        // Query all Google Meet tabs
+        chrome.tabs.query({ url: 'https://meet.google.com/*' }, (tabs) => {
+            console.log(`Found ${tabs.length} Google Meet tabs, ${ongoingMeetings.length} ongoing meetings`);
+            
+            const activeMeetingCodes = new Set();
+            
+            // Extract meeting codes from active tabs
+            tabs.forEach(tab => {
+                const meetingCodeMatch = tab.url.match(/\/([a-z]{3}-[a-z]{4}-[a-z]{3})(?:\?|$)/);
+                if (meetingCodeMatch) {
+                    activeMeetingCodes.add(meetingCodeMatch[1]);
+                    console.log(`Active meeting tab found: ${meetingCodeMatch[1]}`);
+                }
+            });
+            
+            // Check if any ongoing meetings don't have corresponding tabs
+            let hasOrphanedMeetings = false;
+            const now = Date.now();
+            
+            const updatedMeetings = meetings.map(meeting => {
+                // If meeting is ongoing but no tab exists for this meeting code
+                if (!meeting.endTime && !activeMeetingCodes.has(meeting.id)) {
+                    console.log(`Ending orphaned meeting: ${meeting.id} (no corresponding tab found)`);
+                    hasOrphanedMeetings = true;
+                    return { ...meeting, endTime: now };
+                }
+                return meeting;
+            });
+            
+            if (hasOrphanedMeetings) {
+                chrome.storage.local.set({ meetings: updatedMeetings }, () => {
+                    console.log('Cleaned up orphaned meetings');
+                });
+            }
+        });
+    });
+}
+
+// Run cleanup weekly for old meetings
 setInterval(cleanupOldMeetings, 7 * 24 * 60 * 60 * 1000);
+
+// Run orphaned meeting cleanup every 5 minutes (more frequent but smarter)
+setInterval(cleanupOrphanedMeetings, 5 * 60 * 1000);
