@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Google Meet Tracker - Dashboard</title>
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <header class="header">
+            <div class="header-content">
+                <h1>📊 Google Meet Analytics Dashboard</h1>
+                <div class="header-stats">
+                    <div class="stat">
+                        <span class="stat-value" id="total-meetings">0</span>
+                        <span class="stat-label">Total Meetings</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="total-time">0h</span>
+                        <span class="stat-label">Total Time</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="unique-participants">0</span>
+                        <span class="stat-label">Unique People</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="avg-daily-time">0h</span>
+                        <span class="stat-label">Avg Daily Time</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-value" id="work-percentage">0%</span>
+                        <span class="stat-label">% of Work Day</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="filters">
+            <div class="filter-section">
+                <h3>📅 Date Range</h3>
+                <div class="date-inputs">
+                    <input type="date" id="start-date" />
+                    <span>to</span>
+                    <input type="date" id="end-date" />
+                </div>
+                <div class="quick-filters">
+                    <button class="quick-filter" data-days="7">Last 7 days</button>
+                    <button class="quick-filter" data-days="30">Last 30 days</button>
+                    <button class="quick-filter" data-days="90">Last 90 days</button>
+                    <button class="quick-filter active" data-days="all">All time</button>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <h3>👥 Participant Filter</h3>
+                <div class="participant-filter">
+                    <input type="text" id="participant-search" placeholder="Search participants..." />
+                    <select id="participant-select" multiple>
+                        <option value="">All participants</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="filter-actions">
+                <button id="apply-filters" class="btn-primary">Apply Filters</button>
+                <button id="clear-filters" class="btn-secondary">Clear</button>
+                <button id="export-data" class="btn-secondary">📄 Export CSV</button>
+            </div>
+        </div>
+
+        <div class="dashboard-content">
+            <!-- Top Row: Main Analytics -->
+            <div class="analytics-grid">
+                <div class="chart-container chart-large">
+                    <h3>📈 Daily Meeting Time vs Work Hours</h3>
+                    <div class="chart-placeholder" id="daily-time-chart"></div>
+                </div>
+                
+                <div class="chart-container">
+                    <h3>🤝 Meeting Collaborators</h3>
+                    <div class="chart-placeholder" id="collaborators-chart"></div>
+                </div>
+            </div>
+
+            <!-- Second Row: Activity & Duration -->
+            <div class="analytics-grid">
+                <div class="chart-container">
+                    <h3>📈 Meeting Activity Over Time</h3>
+                    <div class="chart-placeholder" id="activity-chart"></div>
+                </div>
+
+                <div class="chart-container">
+                    <h3>⏱️ Meeting Duration Distribution</h3>
+                    <div class="chart-placeholder" id="duration-chart"></div>
+                </div>
+            </div>
+
+            <!-- Third Row: Meeting Patterns -->
+            <div class="analytics-grid">
+                <div class="chart-container">
+                    <h3>📅 Weekly Meeting Pattern</h3>
+                    <div class="chart-placeholder" id="weekly-pattern-chart"></div>
+                </div>
+                
+                <div class="chart-container">
+                    <h3>🕰️ Hourly Meeting Distribution</h3>
+                    <div class="chart-placeholder" id="hourly-distribution-chart"></div>
+                </div>
+            </div>
+
+            <!-- Data Summary Sections -->
+            <div class="data-section">
+                <div class="summary-card">
+                    <h3>👥 Top Meeting Partners</h3>
+                    <div class="participant-list" id="frequent-participants">
+                        <div class="loading">Loading participants...</div>
+                    </div>
+                </div>
+
+                <div class="summary-card">
+                    <h3>🕐 Recent Meetings</h3>
+                    <div class="meetings-list" id="recent-meetings-list">
+                        <div class="loading">Loading meetings...</div>
+                    </div>
+                </div>
+
+                <div class="summary-card">
+                    <h3>📊 Daily Statistics</h3>
+                    <div class="stats-summary" id="daily-stats">
+                        <div class="stat-item">
+                            <span class="stat-value" id="busiest-day">-</span>
+                            <span class="stat-label">Busiest Day</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="avg-meeting-length">0m</span>
+                            <span class="stat-label">Avg Meeting Length</span>
+                        </div>
+                        <div class="stat-item">
+                            <span class="stat-value" id="total-hours-saved">0h</span>
+                            <span class="stat-label">Time in Meetings</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Detailed Table -->
+            <div class="detailed-view">
+                <div class="section-header">
+                    <h3>📋 All Meetings</h3>
+                    <div class="header-actions">
+                        <span class="meeting-count" id="filtered-count">0 meetings</span>
+                    </div>
+                </div>
+                <div class="meetings-table-container">
+                    <table class="meetings-table" id="meetings-table">
+                        <thead>
+                            <tr>
+                                <th>Date & Time</th>
+                                <th>Duration</th>
+                                <th>Participants</th>
+                                <th>Efficiency Score</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="meetings-table-body">
+                            <tr class="loading-row">
+                                <td colspan="5">Loading meetings...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Meeting Detail Modal -->
+        <div id="meeting-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Meeting Details</h3>
+                    <button class="modal-close" id="modal-close">&times;</button>
+                </div>
+                <div class="modal-body" id="modal-body">
+                    <!-- Meeting details will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <div class="footer-content">
+                <p>Google Meet Tracker Extension &copy; 2024</p>
+                <div class="footer-actions">
+                    <button id="clear-data" class="btn-danger">🗑️ Clear All Data</button>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="apexcharts.min.js"></script>
+    <script src="dashboard.js"></script>
+</body>
+</html>
