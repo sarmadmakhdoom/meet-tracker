@@ -336,89 +336,237 @@ function renderDailyTimeChart() {
     });
 
     const sortedDates = Object.keys(dailyData).sort();
-    const seriesData = sortedDates.map(date => ({
+    
+    // Fill in missing dates with 0 values to create proper area chart
+    const filledData = {};
+    if (sortedDates.length > 0) {
+        const startDate = new Date(sortedDates[0]);
+        const endDate = new Date(sortedDates[sortedDates.length - 1]);
+        
+        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+            const dateStr = d.toISOString().split('T')[0];
+            filledData[dateStr] = dailyData[dateStr] || 0;
+        }
+    }
+    
+    const allDates = Object.keys(filledData).sort();
+    const seriesData = allDates.map(date => ({
         x: new Date(date).getTime(),
-        y: dailyData[date].toFixed(2)
+        y: parseFloat(filledData[date].toFixed(2))
+    }));
+    
+    const goalData = allDates.map(date => ({
+        x: new Date(date).getTime(),
+        y: a_hours_work_day
     }));
 
     const options = {
         ...getCommonChartOptions(),
         series: [
-            { name: 'Meeting Time', data: seriesData, color: '#1a73e8' },
-            { name: 'Work Day Goal', data: seriesData.map(d => ({ x: d.x, y: a_hours_work_day })), color: '#34a853' }
+            { 
+                name: 'Meeting Time', 
+                data: seriesData, 
+                color: '#4285f4'
+            },
+            { 
+                name: 'Work Day Goal', 
+                data: goalData, 
+                color: '#34a853'
+            }
         ],
-        chart: { ...getCommonChartOptions().chart, type: 'area', height: 350 },
-        stroke: { curve: 'smooth', width: [3, 2] },
+        chart: { 
+            ...getCommonChartOptions().chart, 
+            type: 'area', 
+            height: 350,
+            stacked: false,
+            zoom: {
+                enabled: false
+            },
+            toolbar: {
+                show: false
+            }
+        },
+        stroke: { 
+            curve: 'smooth', 
+            width: [2, 2],
+            dashArray: [0, 5]
+        },
         fill: {
             type: 'gradient',
             gradient: {
-                shadeIntensity: 1, opacityFrom: 0.5, opacityTo: 0.1, stops: [0, 100]
+                shadeIntensity: 1, 
+                opacityFrom: [0.4, 0.1], 
+                opacityTo: [0.1, 0.05], 
+                stops: [0, 100]
             }
         },
-        xaxis: { type: 'datetime', labels: { format: 'MMM dd' } },
-        yaxis: { title: { text: 'Hours' } },
+        markers: {
+            size: [4, 0],
+            colors: ['#4285f4', '#34a853'],
+            strokeColors: '#fff',
+            strokeWidth: 2,
+            hover: {
+                size: 6
+            }
+        },
+        xaxis: { 
+            type: 'datetime', 
+            labels: { format: 'MMM dd' }
+        },
+        yaxis: { 
+            title: { text: 'Hours', style: { color: '#9aa0a6' } },
+            min: 0,
+            forceNiceScale: true
+        },
         tooltip: {
+            shared: true,
+            intersect: false,
             x: { format: 'dd MMM yyyy' },
             y: { formatter: (val) => `${val} hours` }
         },
-        legend: { position: 'top', horizontalAlign: 'left' }
+        legend: { 
+            position: 'top', 
+            horizontalAlign: 'left',
+            labels: { colors: '#e8eaed' }
+        }
     };
     renderChart('daily-time-chart', options);
 }
 
 function renderCollaboratorsChart() {
-    const participantMeetings = {};
+    const participantData = {};
+    
+    // Calculate meetings and total duration for each participant
     filteredMeetings.forEach(meeting => {
         meeting.participants.forEach(p => {
-            participantMeetings[p] = (participantMeetings[p] || 0) + 1;
+            if (!participantData[p]) {
+                participantData[p] = { meetings: 0, totalDuration: 0 };
+            }
+            participantData[p].meetings += 1;
+            participantData[p].totalDuration += (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0);
         });
     });
     
-    const sortedParticipants = Object.entries(participantMeetings)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10);
-
-    // Define bright, distinguishable colors for dark mode
-    const colors = ['#1a73e8', '#ea4335', '#34a853', '#fbbc04', '#9aa0a6', '#ff6d01', '#9c27b0', '#00acc1', '#8bc34a', '#ff5722'];
+    // Sort by meeting count to find the user (top participant), then sort collaborators by TIME
+    const allParticipantsByMeetings = Object.entries(participantData)
+        .sort((a, b) => b[1].meetings - a[1].meetings);
+    
+    // Exclude the top participant (the user) and sort remaining by total duration
+    const collaborators = allParticipantsByMeetings
+        .slice(1) // Remove the user (first participant)
+        .sort((a, b) => b[1].totalDuration - a[1].totalDuration); // Sort by time spent
+    
+    if (collaborators.length === 0) {
+        const container = document.getElementById('collaborators-chart');
+        if (container) {
+            container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 350px; color: #9aa0a6;">No collaborators found</div>';
+        }
+        return;
+    }
+    
+    // Define different muted colors for each person - generate more colors if needed
+    const baseColors = [
+        '#5f7fbf', '#6ba368', '#b8a347', '#c4645a', '#7a7a7a', 
+        '#8b7cc8', '#d4916e', '#6bbdd4', '#a67ba6', '#7cb87c',
+        '#9f8f5f', '#5f9f7f', '#7f5f9f', '#9f7f5f', '#5f7f9f',
+        '#8f9f5f', '#9f5f7f', '#7f9f5f', '#5f9f8f', '#9f8f7f'
+    ];
+    
+    // Calculate chart height based on number of collaborators (minimum 350px, max 800px)
+    const chartHeight = Math.min(Math.max(350, collaborators.length * 35 + 50), 800);
+    
+    const chartData = collaborators.map((collab, index) => ({
+        name: collab[0],
+        meetings: collab[1].meetings,
+        duration: collab[1].totalDuration,
+        durationInHours: collab[1].totalDuration / (1000 * 60 * 60), // Convert to hours for chart display
+        color: baseColors[index % baseColors.length]
+    }));
 
     const options = {
         ...getCommonChartOptions(),
-        series: sortedParticipants.map(p => p[1]),
-        labels: sortedParticipants.map(p => p[0]),
-        colors: colors,
-        chart: { type: 'pie', height: 350 },
+        series: [{
+            name: 'Time Spent',
+            data: chartData.map(c => ({
+                x: c.name,
+                y: parseFloat(c.durationInHours.toFixed(2)),
+                fillColor: c.color,
+                meetings: c.meetings,
+                totalDuration: c.duration
+            }))
+        }],
+        chart: { 
+            type: 'bar', 
+            height: chartHeight
+        },
         plotOptions: {
-            pie: {
-                expandOnClick: true,
+            bar: {
+                horizontal: true,
+                borderRadius: 4,
                 dataLabels: {
-                    offset: -10
-                }
+                    position: 'top'
+                },
+                distributed: true  // This enables different colors for each bar
             }
         },
-        stroke: {
-            show: false
-        },
-        legend: { 
-            position: 'bottom',
-            horizontalAlign: 'center',
-            labels: {
-                colors: '#e8eaed'
-            }
-        },
-        tooltip: { 
-            y: { formatter: (val) => `${val} meetings` },
-            theme: 'dark'
-        },
+        colors: chartData.map(c => c.color),
         dataLabels: {
             enabled: true,
-            formatter: function (val, opts) {
-                return opts.w.config.series[opts.seriesIndex] + ' meetings';
-            },
+            offsetX: 10,
             style: {
-                fontSize: '12px',
-                colors: ['#ffffff'],
-                fontWeight: 'bold'
+                fontSize: '11px',
+                colors: ['#e8eaed'],
+                fontWeight: 'normal'
+            },
+            formatter: function(val, opts) {
+                const dataIndex = opts.dataPointIndex;
+                const data = chartData[dataIndex];
+                const formattedDuration = formatDuration(data.duration);
+                return `${data.meetings} meetings • ${formattedDuration}`;
             }
+        },
+        xaxis: {
+            categories: chartData.map(c => c.name),
+            labels: {
+                style: {
+                    colors: '#b8bcc3',
+                    fontSize: '11px'
+                }
+            },
+            title: {
+                text: 'Time Spent (Hours)',
+                style: { color: '#9aa0a6' }
+            }
+        },
+        yaxis: {
+            labels: {
+                style: {
+                    colors: '#b8bcc3',
+                    fontSize: '11px'
+                },
+                maxWidth: 150
+            }
+        },
+        tooltip: {
+            custom: function({series, seriesIndex, dataPointIndex, w}) {
+                const data = chartData[dataPointIndex];
+                const formattedDuration = formatDuration(data.duration);
+                const avgDuration = data.meetings > 0 ? formatDuration(data.duration / data.meetings) : '0m';
+                return `
+                    <div style="padding: 8px 12px; background: #1f1f1f; border: 1px solid #333; border-radius: 4px;">
+                        <div style="color: #e8eaed; font-weight: bold; margin-bottom: 4px;">${data.name}</div>
+                        <div style="color: #b8bcc3; font-size: 12px;">Total time: ${formattedDuration}</div>
+                        <div style="color: #b8bcc3; font-size: 12px;">${data.meetings} meetings</div>
+                        <div style="color: #b8bcc3; font-size: 12px;">Avg per meeting: ${avgDuration}</div>
+                    </div>
+                `;
+            }
+        },
+        grid: {
+            borderColor: '#444'
+        },
+        legend: {
+            show: false  // Hide legend since we have different colors
         }
     };
     renderChart('collaborators-chart', options);
@@ -459,7 +607,7 @@ function renderDurationChart() {
         else buckets['2+ hours']++;
     });
 
-    const durationColors = ['#1a73e8', '#34a853', '#fbbc04', '#ea4335', '#9aa0a6'];
+    const durationColors = ['#5f7fbf', '#6ba368', '#b8a347', '#c4645a', '#7a7a7a'];
 
     const options = {
         ...getCommonChartOptions(),
