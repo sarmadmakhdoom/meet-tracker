@@ -638,8 +638,22 @@ function renderActivityChart() {
         ...getCommonChartOptions(),
         series: [{ name: 'Meetings', data: chartData, color: '#ea4335' }],
         chart: { type: 'bar', height: 350 },
-        xaxis: { type: 'datetime', labels: { format: 'MMM dd' } },
-        yaxis: { title: { text: 'Number of Meetings' } },
+        xaxis: { 
+            type: 'datetime', 
+            labels: { 
+                format: 'MMM dd',
+                style: { colors: '#b8bcc3', fontSize: '12px' }
+            }
+        },
+        yaxis: { 
+            title: { 
+                text: 'Number of Meetings',
+                style: { color: '#9aa0a6' }
+            },
+            labels: {
+                style: { colors: '#b8bcc3', fontSize: '12px' }
+            }
+        },
         tooltip: { x: { format: 'dd MMM yyyy' } }
     };
     renderChart('activity-chart', options);
@@ -719,10 +733,43 @@ function renderWeeklyPatternChart() {
 
 function renderHourlyDistributionChart() {
     const hourlyData = Array(24).fill(0);
+    
+    // Calculate time spent (in minutes) for each hour
     filteredMeetings.forEach(m => {
-        const hour = new Date(m.startTime).getHours();
-        hourlyData[hour]++;
+        if (m.endTime && m.startTime) {
+            const startHour = new Date(m.startTime).getHours();
+            const endHour = new Date(m.endTime).getHours();
+            const duration = (m.endTime - m.startTime) / (1000 * 60); // minutes
+            
+            if (startHour === endHour) {
+                // Meeting is within the same hour
+                hourlyData[startHour] += duration;
+            } else {
+                // Meeting spans multiple hours - distribute the time
+                const startTime = new Date(m.startTime);
+                const endTime = new Date(m.endTime);
+                
+                for (let hour = startHour; hour <= endHour; hour++) {
+                    const hourStart = new Date(startTime);
+                    hourStart.setHours(hour, 0, 0, 0);
+                    
+                    const hourEnd = new Date(startTime);
+                    hourEnd.setHours(hour, 59, 59, 999);
+                    
+                    const actualStart = hour === startHour ? startTime : hourStart;
+                    const actualEnd = hour === endHour ? endTime : hourEnd;
+                    
+                    const timeInThisHour = (actualEnd - actualStart) / (1000 * 60); // minutes
+                    if (timeInThisHour > 0) {
+                        hourlyData[hour] += timeInThisHour;
+                    }
+                }
+            }
+        }
     });
+    
+    // Convert minutes to hours for display
+    const hourlyDataInHours = hourlyData.map(minutes => parseFloat((minutes / 60).toFixed(2)));
 
     // Convert to 12-hour format with AM/PM
     const formatHour = (hour) => {
@@ -734,19 +781,42 @@ function renderHourlyDistributionChart() {
 
     const options = {
         ...getCommonChartOptions(),
-        series: [{ name: 'Number of Meetings', data: hourlyData, color: '#34a853' }],
+        series: [{ name: 'Meeting Time', data: hourlyDataInHours, color: '#34a853' }],
         chart: { type: 'area', height: 350 },
         xaxis: {
             categories: Array.from({ length: 24 }, (_, i) => formatHour(i)),
-            title: { text: 'Hour of the Day' },
+            title: { 
+                text: 'Hour of the Day',
+                style: { color: '#9aa0a6', fontSize: '14px' }
+            },
             labels: {
                 rotate: -45,
-                style: { fontSize: '11px' }
+                style: { 
+                    colors: '#b8bcc3', // Use consistent dim white like other charts
+                    fontSize: '12px'
+                }
+            }
+        },
+        yaxis: {
+            title: { 
+                text: 'Hours Spent in Meetings',
+                style: { color: '#9aa0a6', fontSize: '14px' }
+            },
+            labels: {
+                style: {
+                    colors: '#b8bcc3',
+                    fontSize: '12px'
+                },
+                formatter: (val) => `${val}h`
             }
         },
         dataLabels: { enabled: false },
         stroke: { curve: 'smooth', width: 2 },
-        fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.6, opacityTo: 0.2, stops: [0, 100] } }
+        fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.6, opacityTo: 0.2, stops: [0, 100] } },
+        tooltip: {
+            y: { formatter: (val) => `${val} hours` },
+            theme: 'dark'
+        }
     };
     renderChart('hourly-distribution-chart', options);
 }
