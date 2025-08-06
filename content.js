@@ -514,10 +514,20 @@
         };
 
         // Send message to background script
-        chrome.runtime.sendMessage({
-            action: 'meetingStarted',
-            meeting: currentMeeting
-        });
+        try {
+            if (chrome.runtime && chrome.runtime.id) {
+                chrome.runtime.sendMessage({
+                    action: 'meetingStarted',
+                    meeting: currentMeeting
+                }, (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.log('Extension context invalidated:', chrome.runtime.lastError.message);
+                    }
+                });
+            }
+        } catch (error) {
+            console.log('Extension context invalidated:', error.message);
+        }
     }
 
     // End the current meeting session
@@ -528,10 +538,20 @@
             currentMeeting.endTime = Date.now();
             
             // Send final meeting data
-            chrome.runtime.sendMessage({
-                action: 'meetingEnded',
-                meeting: currentMeeting
-            });
+            try {
+                if (chrome.runtime && chrome.runtime.id) {
+                    chrome.runtime.sendMessage({
+                        action: 'meetingEnded',
+                        meeting: currentMeeting
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            console.log('Extension context invalidated:', chrome.runtime.lastError.message);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.log('Extension context invalidated:', error.message);
+            }
         }
 
         currentMeeting = null;
@@ -571,11 +591,21 @@
             console.log('Recording meeting minute:', minuteData);
 
             // Send update to background script
-            chrome.runtime.sendMessage({
-                action: 'meetingUpdate',
-                meeting: currentMeeting,
-                minuteData: minuteData
-            });
+            try {
+                if (chrome.runtime && chrome.runtime.id) {
+                    chrome.runtime.sendMessage({
+                        action: 'meetingUpdate',
+                        meeting: currentMeeting,
+                        minuteData: minuteData
+                    }, (response) => {
+                        if (chrome.runtime.lastError) {
+                            console.log('Extension context invalidated:', chrome.runtime.lastError.message);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.log('Extension context invalidated:', error.message);
+            }
         }
     }
 
@@ -594,11 +624,30 @@
 
     // Update extension icon based on meeting state
     function updateExtensionIcon(state) {
-        chrome.runtime.sendMessage({
-            action: 'updateIcon',
-            state: state,
-            participants: getParticipants()
-        });
+        try {
+            if (chrome.runtime && chrome.runtime.id) {
+                chrome.runtime.sendMessage({
+                    action: 'updateIcon',
+                    state: state,
+                    participants: getParticipants()
+                }, (response) => {
+                    // Handle potential extension context invalidation
+                    if (chrome.runtime.lastError) {
+                        console.log('Extension context invalidated, stopping updates:', chrome.runtime.lastError.message);
+                        if (meetingInterval) {
+                            clearInterval(meetingInterval);
+                            meetingInterval = null;
+                        }
+                    }
+                });
+            }
+        } catch (error) {
+            console.log('Extension context invalidated, stopping updates:', error.message);
+            if (meetingInterval) {
+                clearInterval(meetingInterval);
+                meetingInterval = null;
+            }
+        }
     }
 
     // Handle messages from background script
@@ -656,13 +705,23 @@
     
     // Debug function to clear all data
     window.clearMeetData = function() {
-        chrome.runtime.sendMessage({ action: 'clearAllData' }, (response) => {
-            if (response && response.success) {
-                console.log('✅ All meeting data cleared successfully!');
-            } else {
-                console.log('❌ Failed to clear meeting data');
+        try {
+            if (chrome.runtime && chrome.runtime.id) {
+                chrome.runtime.sendMessage({ action: 'clearAllData' }, (response) => {
+                    if (chrome.runtime.lastError) {
+                        console.log('Extension context invalidated:', chrome.runtime.lastError.message);
+                        return;
+                    }
+                    if (response && response.success) {
+                        console.log('✅ All meeting data cleared successfully!');
+                    } else {
+                        console.log('❌ Failed to clear meeting data');
+                    }
+                });
             }
-        });
+        } catch (error) {
+            console.log('Extension context invalidated:', error.message);
+        }
     };
 
     // Initialize when DOM is ready

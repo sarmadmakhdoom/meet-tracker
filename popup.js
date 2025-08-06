@@ -25,33 +25,54 @@ async function initializePopup() {
 
 function getCurrentMeetingState() {
     return new Promise((resolve) => {
-        // First try to get state from background script
-        chrome.runtime.sendMessage({ action: 'getCurrentState' }, (state) => {
-            if (state && state.state !== 'none') {
-                resolve(state);
+        try {
+            if (!chrome.runtime || !chrome.runtime.id) {
+                resolve({ state: 'none', participants: [], currentMeeting: null });
                 return;
             }
             
-            // If not in meeting according to background, check active tab
-            chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-                const activeTab = tabs[0];
-                
-                if (activeTab && activeTab.url && activeTab.url.includes('meet.google.com')) {
-                    // Send message to content script for detailed state
-                    chrome.tabs.sendMessage(activeTab.id, { action: 'getMeetingState' }, (response) => {
-                        if (chrome.runtime.lastError) {
-                            // Content script not ready or tab not accessible
-                            resolve({ state: 'none', participants: [], currentMeeting: null });
-                        } else {
-                            resolve(response || { state: 'none', participants: [], currentMeeting: null });
-                        }
-                    });
-                } else {
-                    // Not on a meet page
+            // First try to get state from background script
+            chrome.runtime.sendMessage({ action: 'getCurrentState' }, (state) => {
+                if (chrome.runtime.lastError) {
+                    console.log('Extension context invalidated:', chrome.runtime.lastError.message);
                     resolve({ state: 'none', participants: [], currentMeeting: null });
+                    return;
                 }
+                
+                if (state && state.state !== 'none') {
+                    resolve(state);
+                    return;
+                }
+                
+                // If not in meeting according to background, check active tab
+                chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                    if (chrome.runtime.lastError) {
+                        resolve({ state: 'none', participants: [], currentMeeting: null });
+                        return;
+                    }
+                    
+                    const activeTab = tabs[0];
+                    
+                    if (activeTab && activeTab.url && activeTab.url.includes('meet.google.com')) {
+                        // Send message to content script for detailed state
+                        chrome.tabs.sendMessage(activeTab.id, { action: 'getMeetingState' }, (response) => {
+                            if (chrome.runtime.lastError) {
+                                // Content script not ready or tab not accessible
+                                resolve({ state: 'none', participants: [], currentMeeting: null });
+                            } else {
+                                resolve(response || { state: 'none', participants: [], currentMeeting: null });
+                            }
+                        });
+                    } else {
+                        // Not on a meet page
+                        resolve({ state: 'none', participants: [], currentMeeting: null });
+                    }
+                });
             });
-        });
+        } catch (error) {
+            console.log('Extension context invalidated:', error.message);
+            resolve({ state: 'none', participants: [], currentMeeting: null });
+        }
     });
 }
 
@@ -128,20 +149,30 @@ function setupEventListeners() {
     
     // Refresh button
     document.getElementById('refresh-btn').addEventListener('click', refreshMeetingState);
-    
-    // Clear data button
-    document.getElementById('clear-data-btn').addEventListener('click', clearAllData);
 }
 
 function openDashboard() {
-    // Create dashboard URL
-    const dashboardUrl = chrome.runtime.getURL('dashboard.html');
-    
-    // Open dashboard in new tab
-    chrome.tabs.create({ url: dashboardUrl }, () => {
-        // Close popup
-        window.close();
-    });
+    try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+            showError('Extension context invalidated. Please refresh the page.');
+            return;
+        }
+        
+        // Create dashboard URL
+        const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+        
+        // Open dashboard in new tab
+        chrome.tabs.create({ url: dashboardUrl }, () => {
+            if (chrome.runtime.lastError) {
+                showError('Failed to open dashboard: ' + chrome.runtime.lastError.message);
+                return;
+            }
+            // Close popup
+            window.close();
+        });
+    } catch (error) {
+        showError('Extension context invalidated: ' + error.message);
+    }
 }
 
 async function refreshMeetingState() {
@@ -179,32 +210,6 @@ function showError(message) {
     }, 5000);
 }
 
-function clearAllData() {
-    if (confirm('Are you sure you want to clear all meeting data? This cannot be undone.')) {
-        const clearBtn = document.getElementById('clear-data-btn');
-        const originalText = clearBtn.textContent;
-        
-        // Show loading state
-        clearBtn.textContent = '🗑️ Clearing...';
-        clearBtn.disabled = true;
-        
-        chrome.runtime.sendMessage({ action: 'clearAllData' }, (response) => {
-            if (response && response.success) {
-                // Show success message briefly
-                clearBtn.textContent = '✅ Cleared!';
-                setTimeout(() => {
-                    clearBtn.textContent = originalText;
-                    clearBtn.disabled = false;
-                }, 2000);
-            } else {
-                // Show error
-                showError('Failed to clear data');
-                clearBtn.textContent = originalText;
-                clearBtn.disabled = false;
-            }
-        });
-    }
-}
 
 function escapeHtml(text) {
     const div = document.createElement('div');

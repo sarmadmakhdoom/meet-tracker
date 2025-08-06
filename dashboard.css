@@ -476,6 +476,17 @@ button {
     transition: transform 0.3s ease;
 }
 
+/* Special styling for collaborators chart container */
+.chart-container.scrollable {
+    max-height: 500px;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.chart-container.scrollable #collaborators-chart {
+    min-height: 400px;
+}
+
 .chart-container:hover {
     transform: translateY(-2px);
 }
