@@ -7,6 +7,7 @@ const a_hours_work_day = 8;
 
 document.addEventListener('DOMContentLoaded', () => {
     initializeDashboard();
+    setupTooltipPositioning();
 });
 
 async function initializeDashboard() {
@@ -643,8 +644,13 @@ function renderDurationChart() {
 function renderWeeklyPatternChart() {
     const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // Sun - Sat
     filteredMeetings.forEach(m => {
-        const day = new Date(m.startTime).getDay();
-        weeklyData[day] += (m.endTime - m.startTime) / (1000 * 60 * 60); // hours
+        if (m.endTime && m.startTime) { // Only include meetings with both start and end times
+            const day = new Date(m.startTime).getDay();
+            const duration = (m.endTime - m.startTime) / (1000 * 60 * 60); // hours
+            if (duration > 0) { // Only add positive durations
+                weeklyData[day] += duration;
+            }
+        }
     });
 
     const options = {
@@ -748,7 +754,7 @@ function updateRecentMeetings() {
     container.innerHTML = recent.map(m => {
         const duration = m.endTime ? formatDuration(m.endTime - m.startTime) : 'Ongoing';
         return `
-            <div class="meeting-item" onclick="showMeetingDetails('${m.id}')">
+            <div class="meeting-item" data-meeting-id="${m.id}">
                 <div class="meeting-info">
                     <div>${new Date(m.startTime).toLocaleString()}</div>
                     <div class="meeting-time">${duration} • ${m.participants.length}p</div>
@@ -756,6 +762,14 @@ function updateRecentMeetings() {
             </div>
         `;
     }).join('');
+    
+    // Add event listeners for meeting items (CSP-compliant)
+    container.querySelectorAll('.meeting-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            const meetingId = e.currentTarget.getAttribute('data-meeting-id');
+            showMeetingDetails(meetingId);
+        });
+    });
 }
 
 function updateMeetingsTable() {
@@ -769,9 +783,9 @@ function updateMeetingsTable() {
     }
 
     const sorted = [...filteredMeetings].sort((a, b) => b.startTime - a.startTime);
-    tbody.innerHTML = sorted.map(m => {
+    tbody.innerHTML = sorted.map((m, index) => {
         const duration = m.endTime ? formatDuration(m.endTime - m.startTime) : 'Ongoing';
-        const efficiency = m.participants.length ? ((m.endTime - m.startTime) / 3600000 / m.participants.length).toFixed(2) : 'N/A';
+        const efficiency = calculateEfficiencyScore(m);
         const participants = m.participants.slice(0, 3).join(', ') + (m.participants.length > 3 ? ` (+${m.participants.length - 3})` : '');
         const title = m.title || `Meeting ${m.id}`;
         const shortTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
@@ -784,19 +798,65 @@ function updateMeetingsTable() {
                 <td class="meeting-participants" title="${escapeHtml(m.participants.join(', '))}">${escapeHtml(participants)}</td>
                 <td>${efficiency}</td>
                 <td>
-                    <button class="view-details" onclick="showMeetingDetails('${m.id}')">Details</button>
+                    <button class="view-details" data-meeting-id="${m.id}">Details</button>
                 </td>
             </tr>
         `;
     }).join('');
+    
+    // Add event listeners for detail buttons (CSP-compliant)
+    tbody.querySelectorAll('.view-details').forEach(button => {
+        button.addEventListener('click', (e) => {
+            const meetingId = e.target.getAttribute('data-meeting-id');
+            showMeetingDetails(meetingId);
+        });
+    });
+}
+
+// Calculate a more intuitive efficiency score for typical 15-60 minute meetings
+function calculateEfficiencyScore(meeting) {
+    if (!meeting.endTime || !meeting.participants.length) {
+        return 'N/A';
+    }
+    
+    const durationMinutes = (meeting.endTime - meeting.startTime) / 60000;
+    const participantCount = meeting.participants.length;
+    const totalPersonMinutes = durationMinutes * participantCount;
+    
+    // Score based on total person-minutes invested
+    // Lower scores = more efficient
+    let score, grade;
+    
+    if (totalPersonMinutes <= 60) { // <= 1 hour total investment
+        score = totalPersonMinutes;
+        grade = 'A';
+    } else if (totalPersonMinutes <= 120) { // <= 2 hours total investment
+        score = totalPersonMinutes;
+        grade = 'B';
+    } else if (totalPersonMinutes <= 240) { // <= 4 hours total investment
+        score = totalPersonMinutes;
+        grade = 'C';
+    } else if (totalPersonMinutes <= 480) { // <= 8 hours total investment
+        score = totalPersonMinutes;
+        grade = 'D';
+    } else {
+        score = totalPersonMinutes;
+        grade = 'F';
+    }
+    
+    return `${Math.round(score)} (${grade})`;
 }
 
 function showMeetingDetails(meetingId) {
     const meeting = allMeetings.find(m => m.id === meetingId);
-    if (!meeting) return;
+    if (!meeting) {
+        console.error('Meeting not found:', meetingId);
+        return;
+    }
 
     const modalBody = document.getElementById('modal-body');
     const duration = meeting.endTime ? formatDuration(meeting.endTime - meeting.startTime) : 'Ongoing';
+    const efficiency = calculateEfficiencyScore(meeting);
     
     modalBody.innerHTML = `
         ${meeting.title ? `<div style="margin-bottom: 1rem;"><strong>Title:</strong> ${escapeHtml(meeting.title)}</div>` : ''}
@@ -805,7 +865,22 @@ function showMeetingDetails(meetingId) {
         </div>
         <div style="margin-bottom: 1rem;">
             <strong>Time:</strong> ${new Date(meeting.startTime).toLocaleString()} - ${meeting.endTime ? new Date(meeting.endTime).toLocaleString() : 'Now'}<br>
-            <strong>Duration:</strong> ${duration}
+            <strong>Duration:</strong> ${duration}<br>
+            <strong>Efficiency Score:</strong> ${efficiency} 
+            <span class="efficiency-help">?
+                <div class="tooltip">
+                    <strong>Efficiency Score</strong><br><br>
+                    Measures total person-minutes invested in the meeting.<br>
+                    <em>Lower scores are more efficient.</em><br><br>
+                    <strong>Calculation:</strong> Duration × Participants<br><br>
+                    <strong>Grades:</strong><br>
+                    <span class="tooltip-grade">A:</span> ≤60 person-minutes <span class="tooltip-example">(e.g., 30 min × 2 people)</span><br>
+                    <span class="tooltip-grade">B:</span> 61-120 person-minutes <span class="tooltip-example">(e.g., 60 min × 2 people)</span><br>
+                    <span class="tooltip-grade">C:</span> 121-240 person-minutes <span class="tooltip-example">(e.g., 30 min × 8 people)</span><br>
+                    <span class="tooltip-grade">D:</span> 241-480 person-minutes <span class="tooltip-example">(e.g., 60 min × 8 people)</span><br>
+                    <span class="tooltip-grade">F:</span> >480 person-minutes
+                </div>
+            </span>
         </div>
         <div>
             <strong>Participants (${meeting.participants.length}):</strong><br>
@@ -877,6 +952,37 @@ function showError(message) {
 }
 
 // Mock data for development when not in extension context
+// Setup dynamic tooltip positioning
+function setupTooltipPositioning() {
+    document.addEventListener('mouseover', function(e) {
+        if (e.target.closest('.efficiency-help')) {
+            const helpElement = e.target.closest('.efficiency-help');
+            const tooltip = helpElement.querySelector('.tooltip');
+            if (tooltip) {
+                const rect = helpElement.getBoundingClientRect();
+                const tooltipRect = tooltip.getBoundingClientRect();
+                
+                // Position tooltip above the help icon
+                let left = rect.left + (rect.width / 2) - (350 / 2); // Center horizontally
+                let top = rect.top - tooltipRect.height - 10; // Position above with margin
+                
+                // Ensure tooltip doesn't go off-screen horizontally
+                if (left < 10) left = 10;
+                if (left + 350 > window.innerWidth - 10) left = window.innerWidth - 350 - 10;
+                
+                // If tooltip would go above viewport, position it below instead
+                if (top < 10) {
+                    top = rect.bottom + 10;
+                }
+                
+                tooltip.style.left = left + 'px';
+                tooltip.style.top = top + 'px';
+                tooltip.style.transform = 'none'; // Remove transform since we're using absolute positioning
+            }
+        }
+    });
+}
+
 function generateMockData() {
     const participants = ['Alice', 'Bob', 'Charlie', 'David', 'Eve', 'Frank', 'Grace', 'Heidi'];
     const meetingTitles = [

@@ -116,23 +116,51 @@
     function detectMeetingState() {
         console.log('--- Detecting Meeting State ---');
         
-        const urlPattern = window.location.pathname.match(/^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/);
+        const urlPattern = window.location.pathname.match(/^\/([a-z]{3}-[a-z]{4}-[a-z]{3})$/);
         if (!urlPattern) {
             console.log('Result: Not on a meeting URL. State: none');
             return 'none';
         }
         console.log('Debug: On a meeting URL.');
 
+        // --- Post-Meeting Check ---
+        // If the "Rejoin" or "Return to home screen" buttons are visible, the meeting has ended.
+        const rejoinButton = document.querySelector('button[aria-label*="Rejoin"]');
+        const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"]');
+        
+        // Check for text content that indicates post-meeting screen
+        const postMeetingTexts = [
+            'You left the meeting',
+            'The meeting has ended', 
+            'Thanks for joining',
+            'Return to home screen',
+            'Rejoin'
+        ];
+        
+        let hasPostMeetingText = false;
+        for (let text of postMeetingTexts) {
+            if (document.body.textContent.includes(text)) {
+                hasPostMeetingText = true;
+                console.log(`Found post-meeting text: "${text}"`);
+                break;
+            }
+        }
+        
+        if (rejoinButton || returnHomeButton || hasPostMeetingText) {
+            console.log(`Result: Found post-meeting indicators (Rejoin: ${!!rejoinButton}, Return Home: ${!!returnHomeButton}, Text: ${hasPostMeetingText}). State: none`);
+            return 'none';
+        }
+
         // --- Active Meeting Check ---
         // Strongest indicator of being in an active call is the "Leave call" button.
         const leaveCallButton = document.querySelector('[aria-label*="Leave call"], [aria-label*="End call"]');
         if (leaveCallButton) {
-            console.log('Result: Found "Leave call" button. State: active');
+            console.log('Result: Found \"Leave call\" button. State: active');
             return 'active';
         }
 
         // --- Waiting Room Check ---
-        const joinButton = document.querySelector('[aria-label*="Join"], button[jsname="Qx7uuf"]');
+        const joinButton = document.querySelector('[aria-label*="Join"]');
         const askToJoinButton = document.querySelector('[aria-label*="Ask to join"]');
         
         // Check for companion mode button by text content
@@ -158,9 +186,9 @@
             return 'active';
         }
 
-        console.log('Result: On meeting URL but no definitive state found. Defaulting to waiting.');
-        // If on a meeting URL but none of the above, assume it's a waiting/loading state.
-        return 'waiting';
+        console.log('Result: On meeting URL but no definitive state found. Defaulting to none.');
+        // If on a meeting URL but none of the above, assume it's a loading state or the user is not in the call.
+        return 'none';
     }
 
     // Extract participant names from the meeting
