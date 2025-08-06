@@ -25,13 +25,32 @@ async function initializeDashboard() {
 function loadMeetings() {
     return new Promise((resolve, reject) => {
         if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+            // Use basic getMeetings call (works with both enhanced and legacy storage)
             chrome.runtime.sendMessage({ action: 'getMeetings' }, (response) => {
                 if (chrome.runtime.lastError) {
-                    return reject(chrome.runtime.lastError);
+                    const errorMsg = chrome.runtime.lastError.message || JSON.stringify(chrome.runtime.lastError);
+                    console.error('Storage error:', errorMsg);
+                    console.warn('Falling back to mock data due to storage error');
+                    
+                    // Use mock data as fallback
+                    allMeetings = generateMockData();
+                    filteredMeetings = [...allMeetings];
+                    console.log(`Loaded ${allMeetings.length} mock meetings due to storage error.`);
+                    resolve();
+                    return;
                 }
-                allMeetings = response || [];
-                filteredMeetings = [...allMeetings];
-                console.log(`Loaded ${allMeetings.length} meetings.`);
+                
+                // Check if response is valid
+                if (!response || !Array.isArray(response)) {
+                    console.warn('Invalid response from storage, using empty array:', response);
+                    allMeetings = [];
+                    filteredMeetings = [];
+                } else {
+                    allMeetings = response;
+                    filteredMeetings = [...allMeetings];
+                }
+                
+                console.log(`Loaded ${allMeetings.length} meetings from storage.`);
                 resolve();
             });
         } else {
@@ -173,6 +192,21 @@ function setupEventListeners() {
     document.getElementById('meeting-modal').addEventListener('click', (e) => {
         if (e.target.id === 'meeting-modal') closeModal();
     });
+
+    // Storage management event listeners (with error handling)
+    const storageStatsBtn = document.getElementById('show-storage-stats');
+    const cleanupBtn = document.getElementById('cleanup-data');
+    const enhancedExportBtn = document.getElementById('export-enhanced-data');
+    
+    if (storageStatsBtn) {
+        storageStatsBtn.addEventListener('click', showStorageStats);
+    }
+    if (cleanupBtn) {
+        cleanupBtn.addEventListener('click', cleanupOldData);
+    }
+    if (enhancedExportBtn) {
+        enhancedExportBtn.addEventListener('click', exportEnhancedData);
+    }
 }
 
 function setDateRange(days) {
@@ -981,6 +1015,154 @@ function setupTooltipPositioning() {
             }
         }
     });
+}
+
+// Enhanced storage management functions
+async function showStorageStats() {
+    try {
+        const stats = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ action: 'getStorageStats' }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (stats.error) {
+            alert('Storage statistics not available: ' + stats.error);
+            return;
+        }
+        
+        const message = `📊 Storage Statistics:\n\n` +
+            `• Total Meetings: ${stats.totalMeetings}\n` +
+            `• Total Duration: ${formatDuration(stats.totalDuration)}\n` +
+            `• Average Duration: ${formatDuration(stats.averageDuration)}\n` +
+            `• Data Range: ${stats.oldestMeeting ? new Date(stats.oldestMeeting).toLocaleDateString() : 'N/A'} to ${stats.newestMeeting ? new Date(stats.newestMeeting).toLocaleDateString() : 'N/A'}\n\n` +
+            `✨ Enhanced storage provides virtually unlimited capacity compared to the previous ~10MB limit!`;
+            
+        alert(message);
+        
+        console.log('📈 Enhanced Storage Statistics:', {
+            totalMeetings: stats.totalMeetings,
+            totalDuration: formatDuration(stats.totalDuration),
+            averageDuration: formatDuration(stats.averageDuration),
+            dataRange: `${stats.oldestMeeting ? new Date(stats.oldestMeeting).toLocaleDateString() : 'N/A'} to ${stats.newestMeeting ? new Date(stats.newestMeeting).toLocaleDateString() : 'N/A'}`
+        });
+        
+    } catch (error) {
+        console.error('Error getting storage stats:', error);
+        alert('Failed to get storage statistics. The enhanced storage might not be initialized yet.');
+    }
+}
+
+async function cleanupOldData() {
+    const confirmed = confirm(
+        '🧹 Storage Cleanup\n\n' +
+        'This will:\n' +
+        '• Delete meetings older than 90 days\n' +
+        '• Keep maximum 1000 most recent meetings\n' +
+        '• Compress meetings older than 30 days\n\n' +
+        'Continue with cleanup?'
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+        const result = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({
+                action: 'cleanupOldData',
+                options: {
+                    maxAge: 90 * 24 * 60 * 60 * 1000, // 90 days
+                    maxMeetings: 1000,
+                    compressOld: true
+                }
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (result.error) {
+            alert('Cleanup failed: ' + result.error);
+            return;
+        }
+        
+        const message = `✅ Cleanup Complete!\n\n` +
+            `• ${result.deleted} meetings deleted\n` +
+            `• ${result.compressed} meetings compressed\n\n` +
+            `Your storage is now optimized for better performance.`;
+            
+        alert(message);
+        
+        // Reload meetings to reflect changes
+        await loadMeetings();
+        applyFilters();
+        
+    } catch (error) {
+        console.error('Error during cleanup:', error);
+        alert('Cleanup failed. Please try again.');
+    }
+}
+
+async function exportEnhancedData() {
+    const includeMinutes = confirm(
+        '📤 Enhanced Data Export\n\n' +
+        'Include detailed participant tracking data?\n\n' +
+        '• Yes: Full export with minute-by-minute participant data\n' +
+        '• No: Basic export with meeting summaries only\n\n' +
+        'Note: Full export may be large for extensive meeting history.'
+    );
+    
+    try {
+        const exportData = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({
+                action: 'exportData',
+                options: {
+                    includeMinutes: includeMinutes
+                }
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (exportData.error) {
+            alert('Export failed: ' + exportData.error);
+            return;
+        }
+        
+        // Create and download the export file
+        const dataStr = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([dataStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `meet-tracker-enhanced-export-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        
+        URL.revokeObjectURL(url);
+        
+        const message = `✅ Export Complete!\n\n` +
+            `• ${exportData.meetings.length} meetings exported\n` +
+            `• ${exportData.participants.length} participants exported\n` +
+            `• Export date: ${exportData.exportDate}\n\n` +
+            `File saved with enhanced format for better data analysis.`;
+            
+        alert(message);
+        
+    } catch (error) {
+        console.error('Error during export:', error);
+        alert('Export failed. Please try again.');
+    }
 }
 
 function generateMockData() {

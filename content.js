@@ -63,10 +63,19 @@
                     // Check if any added nodes are related to meeting elements
                     for (let node of mutation.addedNodes) {
                         if (node.nodeType === 1) { // Element node
+                            const nodeText = node.textContent || '';
                             if (node.querySelector && (
                                 node.querySelector('[data-participant-id]') ||
                                 node.querySelector('[aria-label*="camera"]') ||
                                 node.querySelector('[aria-label*="microphone"]') ||
+                                node.querySelector('[aria-label*="Join"]') ||
+                                node.querySelector('[aria-label*="Leave"]') ||
+                                node.querySelector('[aria-label*="Ask to join"]') ||
+                                node.querySelector('button') ||
+                                nodeText.includes('You left the meeting') ||
+                                nodeText.includes('Rejoin') ||
+                                nodeText.includes('Return to home') ||
+                                nodeText.includes('Ask to join') ||
                                 node.querySelector('video')
                             )) {
                                 shouldCheck = true;
@@ -160,21 +169,42 @@
         }
 
         // --- Waiting Room Check ---
-        const joinButton = document.querySelector('[aria-label*="Join"]');
+        const joinButton = document.querySelector('[aria-label*="Join"], button[jsname="Qx7uuf"]');
         const askToJoinButton = document.querySelector('[aria-label*="Ask to join"]');
         
         // Check for companion mode button by text content
         let useCompanionModeButton = null;
         const buttons = document.querySelectorAll('button');
         for (let button of buttons) {
-            if (button.textContent.includes('Use Companion mode')) {
+            const buttonText = button.textContent.toLowerCase();
+            if (buttonText.includes('use companion mode') || buttonText.includes('join now') || buttonText.includes('ask to join')) {
                 useCompanionModeButton = button;
                 break;
             }
         }
+        
+        // Check for waiting room specific text patterns
+        const waitingRoomTexts = [
+            'Join now', 'Ask to join', 'Waiting to join',
+            'Someone will let you in soon', 'You\'re waiting for someone to let you in',
+            'Check your audio and video', 'Preview your audio and video'
+        ];
+        
+        let hasWaitingText = false;
+        for (let text of waitingRoomTexts) {
+            if (document.body.textContent.includes(text)) {
+                hasWaitingText = true;
+                console.log(`Found waiting room text: "${text}"`);
+                break;
+            }
+        }
+        
+        // Check for camera/microphone preview elements (typical in waiting room)
+        const previewVideo = document.querySelector('video[autoplay], video[muted]');
+        const micCamControls = document.querySelector('[aria-label*="Turn on camera"], [aria-label*="Turn off camera"], [aria-label*="microphone"]');
 
-        if (joinButton || askToJoinButton || useCompanionModeButton) {
-            console.log(`Result: In preview room (Join button: ${!!joinButton}, AskToJoin: ${!!askToJoinButton}, Companion: ${!!useCompanionModeButton}). State: waiting`);
+        if (joinButton || askToJoinButton || useCompanionModeButton || hasWaitingText || (previewVideo && micCamControls)) {
+            console.log(`Result: In preview/waiting room (Join: ${!!joinButton}, AskToJoin: ${!!askToJoinButton}, Companion: ${!!useCompanionModeButton}, WaitingText: ${hasWaitingText}, Preview: ${!!(previewVideo && micCamControls)}). State: waiting`);
             return 'waiting';
         }
         
@@ -694,7 +724,7 @@
         if (meetingInterval) {
             clearInterval(meetingInterval);
         }
-        if (isInMeeting) {
+        if (meetingState === 'active') {
             endMeetingSession();
         }
     });
