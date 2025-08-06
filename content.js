@@ -221,99 +221,179 @@
         return 'none';
     }
 
-    // Extract participant names from the meeting
+    // Extract participant names from the meeting with enhanced reliability
     function getParticipants(realOnly = false) {
         const participants = new Set();
+        console.log('🔍 Starting participant detection...');
         
-        // Focus on the most reliable participant detection methods
-        // Method 1: Try to get participants from the people panel (most reliable)
-        const peoplePanel = document.querySelector('[jsname="hsqVEd"]');
-        if (peoplePanel) {
-            const nameElements = peoplePanel.querySelectorAll('[jsname="YEtHCd"]');
-            nameElements.forEach(element => {
-                const name = element.textContent.trim();
-                if (name && isValidParticipantName(name)) {
-                    participants.add(name);
-                }
-            });
+        // Method 1: Direct access to participant data from global variables
+        try {
+            // Google Meet sometimes stores participant data in a global variable
+            // We can try to access it directly for the most reliable data
+            const meetData = window.mweb || window.gms;
+            if (meetData && meetData._meet_participants) {
+                console.log('📊 Found Google Meet participant data in global variable');
+                const names = Object.values(meetData._meet_participants)
+                    .filter(p => p && p.name)
+                    .map(p => p.name);
+                
+                names.forEach(name => {
+                    if (name && isValidParticipantName(name)) {
+                        participants.add(name);
+                        console.log(`✓ Added participant from global data: ${name}`);
+                    }
+                });
+            }
+        } catch (e) {
+            console.log('Could not access global participant data:', e.message);
         }
         
-        // Method 2: Look for participant tiles with data-participant-id
+        // Method 2: Count all videos and participants in grid
+        // Google Meet uses both standard video elements and special participant containers
+        const videoElements = document.querySelectorAll('video');
         const participantTiles = document.querySelectorAll('[data-participant-id]');
-        console.log('Found participant tiles:', participantTiles.length);
+        const participantGridItems = document.querySelectorAll('[jsname="A5il2e"] > div');
         
-        participantTiles.forEach((tile, index) => {
-            console.log(`Analyzing tile ${index}:`, tile);
+        console.log(`📹 Found participant data: ${videoElements.length} videos, ${participantTiles.length} participant tiles, ${participantGridItems.length} grid items`);
+        
+        // Calculate expected participant count from UI elements
+        const estimatedCount = Math.max(
+            videoElements.length,
+            participantTiles.length,
+            participantGridItems.length,
+            document.querySelectorAll('.uGOf1d').length
+        );
+        
+        console.log(`📊 Estimated participant count: ${estimatedCount}`);
+        
+        // Method 3: Get names from tiles (most comprehensive approach)
+        const tilesToProcess = participantTiles.length > 0 ? 
+            Array.from(participantTiles) : 
+            Array.from(participantGridItems);
+        
+        console.log(`🔍 Processing ${tilesToProcess.length} participant tiles...`);
+        
+        // Enhanced name extraction from tiles
+        tilesToProcess.forEach((tile, index) => {
+            let foundName = null;
+            const tileDebug = [];
             
-            // Try multiple approaches to find names in the tile
-            let foundNames = [];
+            // First try direct name attributes (most reliable)
+            const directNameAttrs = ['data-participant-id', 'data-self-name', 'aria-label', 'title'];
+            for (const attr of directNameAttrs) {
+                const attrValue = tile.getAttribute(attr);
+                if (attrValue) {
+                    tileDebug.push(`${attr}="${attrValue}"`);
+                    const cleanName = cleanParticipantName(attrValue);
+                    if (cleanName && isValidParticipantName(cleanName)) {
+                        foundName = cleanName;
+                        break;
+                    }
+                }
+            }
             
-            // Approach 1: Look for common name overlay classes
-            const nameSelectors = [
-                '.zWfAib', '.VUbVFb', '.V4YR2b', '[data-self-name]',
-                '.participant-name', '.name-overlay', '.user-name',
-                'div[data-tooltip]', 'span[title]', '[aria-label]'
-            ];
-            
-            nameSelectors.forEach(selector => {
-                const elements = tile.querySelectorAll(selector);
-                elements.forEach(el => {
-                    let name = el.textContent || el.getAttribute('aria-label') || el.getAttribute('data-self-name') || el.getAttribute('title') || el.getAttribute('data-tooltip');
-                    if (name) {
-                        foundNames.push(`${selector}: "${name.trim()}"`);
-                        name = cleanParticipantName(name);
-                        if (name && isValidParticipantName(name)) {
-                            participants.add(name);
-                            console.log(`✓ Added participant from ${selector}:`, name);
-                        } else {
-                            console.log(`✗ Filtered out from ${selector}:`, name);
+            // Next try all child elements with potential name classes
+            if (!foundName) {
+                // First check the most common name containers
+                const nameContainers = tile.querySelectorAll(
+                    '.zWfAib, .VUbVFb, .V4YR2b, .participant-name, [data-self-name], .rKjVjd, .dkjMxf, [role="button"][data-tooltip], .r6xAKc'
+                );
+                
+                nameContainers.forEach(container => {
+                    if (foundName) return;
+                    const text = container.textContent?.trim();
+                    if (text) {
+                        tileDebug.push(`container="${text}"`);
+                        const cleanName = cleanParticipantName(text);
+                        if (cleanName && isValidParticipantName(cleanName)) {
+                            foundName = cleanName;
                         }
                     }
                 });
-            });
+            }
             
-            // Approach 2: Look for any text that might be a name
-            const allTextElements = tile.querySelectorAll('*');
-            allTextElements.forEach(el => {
-                const text = el.textContent?.trim();
-                if (text && text.length > 2 && text.length < 50 && /^[a-zA-Z\s]+$/.test(text)) {
-                    // This might be a name, let's see if it passes our filters
-                    const cleanName = cleanParticipantName(text);
-                    if (cleanName && isValidParticipantName(cleanName) && !foundNames.some(f => f.includes(cleanName))) {
-                        foundNames.push(`text: "${text}"`);
-                        participants.add(cleanName);
-                        console.log(`✓ Added participant from text content:`, cleanName);
+            // Finally, search all text nodes for potential names
+            if (!foundName) {
+                // Use TreeWalker for efficient text node traversal
+                const allTexts = [];
+                const walker = document.createTreeWalker(
+                    tile, 
+                    NodeFilter.SHOW_TEXT, 
+                    null, 
+                    false
+                );
+                
+                let node;
+                while (node = walker.nextNode()) {
+                    const text = node.textContent?.trim();
+                    if (text && text.length > 1 && text.length < 50) {
+                        allTexts.push(text);
+                        // Only process text that looks like a name
+                        if (/^[A-Z][a-z]*(\s+[A-Z][a-z]*)+$/.test(text) || // First Last format
+                            /^[A-Z][a-z]+$/.test(text)) { // Single name
+                            
+                            const cleanName = cleanParticipantName(text);
+                            if (cleanName && isValidParticipantName(cleanName)) {
+                                foundName = cleanName;
+                                tileDebug.push(`text="${text}"`);
+                                break;
+                            }
+                        }
                     }
                 }
-            });
+                
+                // If no name found, just log the texts we found
+                if (!foundName && allTexts.length > 0) {
+                    tileDebug.push(`all_texts=[${allTexts.join(', ')}]`);
+                }
+            }
             
-            console.log(`Tile ${index} found names:`, foundNames);
-        });
-        
-        // Method 3: Look in captions/transcript area for speaker names
-        const captionElements = document.querySelectorAll('[jsname="dsyhDe"] [jsname="YEtHCd"]');
-        captionElements.forEach(element => {
-            const name = element.textContent.trim();
-            if (name && isValidParticipantName(name)) {
-                participants.add(name);
+            // Log what we found for this tile
+            console.log(`Tile ${index + 1}: ${foundName ? `Found "${foundName}"` : 'No name found'} [${tileDebug.join(', ')}]`);
+            
+            if (foundName) {
+                participants.add(foundName);
             }
         });
-
-        let finalParticipants = Array.from(participants);
         
-        // Apply additional filtering if requested
+        // Method 4: Fallback - Check people panel
+        const peoplePanel = document.querySelector('[jsname="hsqVEd"]');
+        if (peoplePanel) {
+            const nameElements = peoplePanel.querySelectorAll('[jsname="YEtHCd"]');
+            console.log(`👥 Found ${nameElements.length} names in people panel`);
+            nameElements.forEach(element => {
+                const name = cleanParticipantName(element.textContent);
+                if (name && isValidParticipantName(name)) {
+                    participants.add(name);
+                    console.log(`Added from people panel: ${name}`);
+                }
+            });
+        }
+        
+        // Method 5: Fallback - Add unknown participants if we have fewer names than expected
+        const detectedNames = participants.size;
+        if (detectedNames < estimatedCount) {
+            console.log(`⚠️ Only detected ${detectedNames} names but found ${estimatedCount} participants in the UI`);
+            
+            for (let i = detectedNames + 1; i <= estimatedCount; i++) {
+                const unknownName = `Unknown Participant ${i}`;
+                participants.add(unknownName);
+                console.log(`Added placeholder for missing participant: ${unknownName}`);
+            }
+        }
+        
+        // Final processing and filtering
+        let finalParticipants = Array.from(participants);
         if (realOnly) {
             finalParticipants = finalParticipants.filter(p => isRealParticipant(p));
         }
-
-        console.log('Participant detection:', {
-            peoplePanel: !!peoplePanel,
-            participantTiles: participantTiles.length,
-            captionElements: captionElements.length,
-            rawParticipants: Array.from(participants),
-            filteredParticipants: finalParticipants
+        
+        console.log('🎯 Final participant detection:', {
+            estimatedCount,
+            detectedNames: finalParticipants.length,
+            names: finalParticipants
         });
-
+        
         return finalParticipants;
     }
     
