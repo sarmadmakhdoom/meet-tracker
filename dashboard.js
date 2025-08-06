@@ -199,7 +199,6 @@ function setupEventListeners() {
     });
     
     document.getElementById('apply-filters').addEventListener('click', applyFilters);
-    document.getElementById('clear-filters').addEventListener('click', clearFilters);
     document.getElementById('export-data').addEventListener('click', exportData);
     document.getElementById('clear-data').addEventListener('click', clearAllData);
     
@@ -458,6 +457,9 @@ function renderDailyTimeChart() {
             hover: {
                 size: 6
             }
+        },
+        dataLabels: {
+            enabled: false  // Hide data labels on chart points
         },
         xaxis: { 
             type: 'datetime', 

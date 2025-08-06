@@ -782,6 +782,73 @@ button {
     color: #9aa0a6;
 }
 
+/* Compact footer buttons */
+.footer-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.btn-compact {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid #444;
+    background: #333;
+    color: #e8eaed;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    padding: 0;
+    position: relative;
+}
+
+.btn-compact:hover {
+    background: #444;
+    border-color: #555;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.btn-compact.btn-danger-compact {
+    border-color: #ea4335;
+    background: rgba(234, 67, 53, 0.1);
+}
+
+.btn-compact.btn-danger-compact:hover {
+    background: rgba(234, 67, 53, 0.2);
+    border-color: #ea4335;
+}
+
+/* Tooltip for compact buttons */
+.btn-compact::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 120%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2d2d2d;
+    color: #e8eaed;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transition: all 0.2s ease;
+    pointer-events: none;
+    z-index: 1000;
+    border: 1px solid #444;
+}
+
+.btn-compact:hover::after {
+    visibility: visible;
+    opacity: 1;
+}
+
 /* Loading state */
 .loading {
     display: flex;
