@@ -286,6 +286,12 @@ function getRelativeTime(date) {
 function setupEventListeners() {
     // Dashboard button
     document.getElementById('dashboard-btn').addEventListener('click', openDashboard);
+    
+    // End meeting button (only visible when meeting is active)
+    const endMeetingBtn = document.getElementById('end-meeting-btn');
+    if (endMeetingBtn) {
+        endMeetingBtn.addEventListener('click', endCurrentMeeting);
+    }
 }
 
 function openDashboard() {
@@ -330,6 +336,88 @@ async function refreshMeetingState() {
         // Reset button
         refreshBtn.textContent = originalText;
         refreshBtn.disabled = false;
+    }
+}
+
+async function endCurrentMeeting() {
+    const endBtn = document.getElementById('end-meeting-btn');
+    const originalText = endBtn.innerHTML;
+    
+    // Show loading state
+    endBtn.innerHTML = '⏳';
+    endBtn.disabled = true;
+    endBtn.title = 'Ending meeting...';
+    
+    try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+            showError('Extension context invalidated. Please refresh the page.');
+            return;
+        }
+        
+        // First try to get the active Google Meet tab
+        const tabs = await new Promise((resolve) => {
+            chrome.tabs.query({ url: 'https://meet.google.com/*' }, resolve);
+        });
+        
+        let success = false;
+        
+        if (tabs.length > 0) {
+            // Send force end message to content scripts
+            for (const tab of tabs) {
+                try {
+                    const response = await new Promise((resolve) => {
+                        chrome.tabs.sendMessage(tab.id, { type: 'force_end_meeting' }, resolve);
+                    });
+                    if (response && response.success) {
+                        success = true;
+                        break;
+                    }
+                } catch (error) {
+                    console.log('Could not send message to tab:', tab.id, error);
+                }
+            }
+        }
+        
+        // Also send to background script as a fallback
+        try {
+            const backgroundResponse = await new Promise((resolve) => {
+                chrome.runtime.sendMessage({ type: 'forceEndMeeting' }, resolve);
+            });
+            if (backgroundResponse && backgroundResponse.success) {
+                success = true;
+            }
+        } catch (error) {
+            console.log('Could not send message to background:', error);
+        }
+        
+        if (success) {
+            // Show success feedback
+            endBtn.innerHTML = '✓';
+            endBtn.title = 'Meeting ended successfully';
+            
+            // Refresh the popup state after a short delay
+            setTimeout(async () => {
+                try {
+                    const state = await getCurrentMeetingState();
+                    displayMeetingState(state);
+                } catch (error) {
+                    console.error('Error refreshing after end meeting:', error);
+                }
+            }, 1000);
+        } else {
+            showError('No active meeting found to end');
+        }
+        
+    } catch (error) {
+        console.error('Error ending meeting:', error);
+        showError('Failed to end meeting: ' + error.message);
+    } finally {
+        // Reset button after 2 seconds
+        setTimeout(() => {
+            endBtn.innerHTML = originalText;
+            endBtn.disabled = false;
+            endBtn.title = 'End Meeting Manually';
+        }, 2000);
     }
 }
 

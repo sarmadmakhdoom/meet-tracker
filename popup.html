@@ -317,6 +317,39 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+        
+        .end-meeting-btn {
+            width: 24px;
+            height: 24px;
+            background: rgba(234, 67, 53, 0.2);
+            color: #ea4335;
+            border: 1px solid rgba(234, 67, 53, 0.3);
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+        }
+        
+        .end-meeting-btn:hover {
+            background: rgba(234, 67, 53, 0.3);
+            transform: scale(1.1);
+            border-color: rgba(234, 67, 53, 0.5);
+        }
+        
+        .end-meeting-btn:active {
+            transform: scale(0.95);
+        }
+        
+        .end-meeting-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
     </style>
 </head>
 <body>
@@ -346,7 +379,10 @@
 
                 <!-- Current Meeting Info -->
                 <div id="current-meeting" class="current-meeting" style="display: none;">
-                    <div class="current-meeting-title">Active Meeting</div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div class="current-meeting-title">Active Meeting</div>
+                        <button id="end-meeting-btn" class="end-meeting-btn" title="End Meeting Manually">✕</button>
+                    </div>
                     <div class="current-meeting-info">
                         <div>Duration: <span id="meeting-duration">--</span></div>
                         <div>Started: <span id="meeting-start">--</span></div>

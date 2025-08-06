@@ -128,6 +128,17 @@ class SimpleMeetTracker {
     setInterval(() => {
       this.aggressiveMeetingStateCheck();
     }, 10000);
+    
+    // Very frequent meeting end detection (every 2 seconds)
+    setInterval(() => {
+      this.frequentMeetingEndCheck();
+    }, 2000);
+    
+    // Network-based detection (check if Meet API calls are still happening)
+    this.setupNetworkDetection();
+    
+    // Page visibility and focus detection
+    this.setupPageVisibilityDetection();
   }
 
   scanForParticipants() {
@@ -945,18 +956,128 @@ class SimpleMeetTracker {
     }
   }
 
-  // Manual cleanup method that can be called from dashboard
-  forceEndMeeting() {
+  // Frequent meeting end detection (every 2 seconds)
+  frequentMeetingEndCheck() {
+    if (!this.meetingState.isActive) return;
+    
+    // Quick checks for meeting end indicators
+    const bodyText = document.body.textContent || '';
+    const immediateEndSignals = [
+      'You left the meeting',
+      'Thanks for joining', 
+      'The meeting has ended',
+      'Meeting ended',
+      'Rejoin',
+      'Return to home screen'
+    ];
+    
+    for (let signal of immediateEndSignals) {
+      if (bodyText.includes(signal)) {
+        console.log(`[SimpleMeetTracker] Frequent check: Found end signal "${signal}" - ending meeting`);
+        this.forceEndMeetingInternal('text_detection');
+        return;
+      }
+    }
+    
+    // Check if Leave button disappeared (strong indicator)
+    const leaveButton = document.querySelector('[aria-label*="Leave call"], [aria-label*="End call"]');
+    const joinButton = document.querySelector('[aria-label*="Join"], [aria-label*="Ask to join"]');
+    
+    if (!leaveButton && joinButton) {
+      console.log('[SimpleMeetTracker] Frequent check: Leave button gone, Join button appeared - ending meeting');
+      this.forceEndMeetingInternal('button_change');
+      return;
+    }
+    
+    // Check for URL changes to non-meeting pages
+    if (!this.isMeetPage()) {
+      console.log('[SimpleMeetTracker] Frequent check: No longer on meeting page - ending meeting');
+      this.forceEndMeetingInternal('page_navigation');
+      return;
+    }
+  }
+  
+  // Network-based detection
+  setupNetworkDetection() {
+    console.log('[SimpleMeetTracker] Setting up network-based detection');
+    
+    // Track network requests to Google Meet APIs
+    this.lastNetworkActivity = Date.now();
+    
+    // Override fetch to monitor Google Meet API calls
+    const originalFetch = window.fetch;
+    const tracker = this;
+    
+    window.fetch = function(...args) {
+      const url = args[0];
+      if (typeof url === 'string' && (url.includes('meet.google.com') || url.includes('googleapis.com'))) {
+        tracker.lastNetworkActivity = Date.now();
+        console.log('[SimpleMeetTracker] Network activity detected:', url.substring(0, 100));
+      }
+      return originalFetch.apply(this, args);
+    };
+    
+    // Check network activity every 30 seconds
+    setInterval(() => {
+      if (this.meetingState.isActive) {
+        const timeSinceLastActivity = Date.now() - this.lastNetworkActivity;
+        
+        // If no network activity for 5 minutes, meeting might be dead
+        if (timeSinceLastActivity > 5 * 60 * 1000) {
+          console.log('[SimpleMeetTracker] No network activity for 5 minutes - checking meeting state');
+          this.aggressiveMeetingStateCheck();
+        }
+      }
+    }, 30000);
+  }
+  
+  // Page visibility and focus detection  
+  setupPageVisibilityDetection() {
+    console.log('[SimpleMeetTracker] Setting up page visibility detection');
+    
+    // Track when user switches tabs/windows
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && this.meetingState.isActive) {
+        console.log('[SimpleMeetTracker] Tab became visible - checking meeting state');
+        setTimeout(() => {
+          this.scanForParticipants();
+          this.updateMeetingState();
+        }, 1000);
+      }
+    });
+    
+    // Track window focus changes
+    window.addEventListener('focus', () => {
+      if (this.meetingState.isActive) {
+        console.log('[SimpleMeetTracker] Window focused - checking meeting state');
+        setTimeout(() => {
+          this.scanForParticipants();
+          this.updateMeetingState();
+        }, 500);
+      }
+    });
+    
+    // Track beforeunload (page about to close)
+    window.addEventListener('beforeunload', () => {
+      if (this.meetingState.isActive) {
+        console.log('[SimpleMeetTracker] Page unloading - ending meeting');
+        this.forceEndMeetingInternal('page_unload');
+      }
+    });
+  }
+  
+  // Internal method to force end meeting with reason
+  forceEndMeetingInternal(reason) {
     if (!this.meetingState.isActive) {
-      console.log('[SimpleMeetTracker] No active meeting to end');
       return false;
     }
     
-    console.log('[SimpleMeetTracker] Manually ending meeting:', this.meetingState.meetingTitle);
+    console.log(`[SimpleMeetTracker] Force ending meeting due to: ${reason}`);
     
     const now = Date.now();
     this.meetingState.isActive = false;
     this.meetingState.endTime = now;
+    this.meetingState.endReason = reason;
     
     // Send meeting end to background
     this.sendMeetingStateToBackground('ended');
@@ -968,6 +1089,17 @@ class SimpleMeetTracker {
     this.participants.clear();
     
     return true;
+  }
+
+  // Manual cleanup method that can be called from dashboard
+  forceEndMeeting() {
+    if (!this.meetingState.isActive) {
+      console.log('[SimpleMeetTracker] No active meeting to end');
+      return false;
+    }
+    
+    console.log('[SimpleMeetTracker] Manually ending meeting:', this.meetingState.meetingTitle);
+    return this.forceEndMeetingInternal('manual_cleanup');
   }
 }
 
