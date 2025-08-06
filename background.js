@@ -121,6 +121,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     });
                     break;
                     
+                case 'meetingEndedByNavigation':
+                    await handleMeetingEndedByNavigation(request.meetingId, request.reason, sender);
+                    sendResponse({ success: true });
+                    break;
+                    
                 default:
                     console.warn(`⚠️ Unknown message type: ${messageType}`);
                     sendResponse({ error: `Unknown message type: ${messageType}` });
@@ -855,6 +860,42 @@ async function detectAndCleanupZombieMeetings() {
         
     } catch (error) {
         console.error('❌ Error during zombie meeting detection:', error);
+    }
+}
+
+// Handle meeting ended by navigation (URL change)
+async function handleMeetingEndedByNavigation(meetingId, reason, sender) {
+    console.log(`🔀 Meeting ended by navigation: ${meetingId} (reason: ${reason})`);
+    
+    // Check if this matches our current meeting
+    if (currentMeetingState.currentMeeting && currentMeetingState.currentMeeting.id === meetingId) {
+        const endTime = Date.now();
+        const finalMeeting = {
+            ...currentMeetingState.currentMeeting,
+            endTime,
+            participants: currentMeetingState.participants,
+            navigationEnded: true,
+            reason: reason
+        };
+        
+        // Save the meeting
+        await saveMeeting(finalMeeting);
+        
+        const duration = endTime - finalMeeting.startTime;
+        console.log(`🔧 Meeting ended by navigation after ${Math.round(duration / 60000)} minutes (reason: ${reason})`);
+        
+        // Reset state
+        currentMeetingState = {
+            state: 'none',
+            participants: [],
+            currentMeeting: null,
+            networkParticipants: 0
+        };
+        
+        // Update icon
+        updateIcon('none', []);
+    } else {
+        console.log(`⚠️ Navigation-ended meeting ${meetingId} doesn't match current meeting`);
     }
 }
 

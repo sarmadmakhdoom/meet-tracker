@@ -863,75 +863,78 @@ class SimpleMeetTracker {
   handleURLChange(newUrl) {
     console.log(`[SimpleMeetTracker] Handling URL change: ${newUrl}`);
     
-    // Check if we navigated away from the meeting
+    const oldUrl = this.currentUrl || window.location.href;
+    const oldMeetingId = this.meetingState.meetingId;
+    
+    // Check if we navigated away from Google Meet entirely
+    if (!newUrl.includes('meet.google.com')) {
+      console.log('[SimpleMeetTracker] Navigated away from Google Meet - ending meeting');
+      
+      if (this.meetingState.isActive) {
+        this.forceEndMeetingInternal('navigation_away_from_meet');
+      }
+      return;
+    }
+    
+    // Check if we navigated away from the specific meeting
     if (!this.isMeetPageFromUrl(newUrl)) {
       console.log('[SimpleMeetTracker] Navigated away from meeting page - ending meeting');
       
       if (this.meetingState.isActive) {
-        // End the meeting immediately
-        const now = Date.now();
-        this.meetingState.isActive = false;
-        this.meetingState.endTime = now;
-        
-        // Send meeting end to background
-        this.sendMeetingStateToBackground('ended');
-        
-        // Stop minute tracking
-        this.stopMinuteTracking();
-        
-        // Clear participants
-        this.participants.clear();
+        this.forceEndMeetingInternal('navigation_away_from_meeting');
       }
-      
       return;
     }
     
     // Check if we're on a meeting ended or landing page
-    if (newUrl.includes('/landing/') || newUrl.includes('/ended/')) {
-      console.log('[SimpleMeetTracker] On meeting landing/ended page - ending meeting');
+    if (newUrl.includes('/landing/') || newUrl.includes('/ended/') || newUrl.includes('/thankyou/')) {
+      console.log('[SimpleMeetTracker] On meeting ended/landing page - ending meeting');
       
       if (this.meetingState.isActive) {
-        const now = Date.now();
-        this.meetingState.isActive = false;
-        this.meetingState.endTime = now;
-        
-        this.sendMeetingStateToBackground('ended');
-        this.stopMinuteTracking();
-        this.participants.clear();
+        this.forceEndMeetingInternal('meeting_ended_page');
+      }
+      return;
+    }
+    
+    // Extract meeting IDs from URLs
+    const oldMeetingIdFromUrl = this.getMeetingIdFromUrl(oldUrl);
+    const newMeetingIdFromUrl = this.getMeetingIdFromUrl(newUrl);
+    
+    console.log(`[SimpleMeetTracker] URL change analysis:`, {
+      oldUrl: oldUrl.substring(0, 100),
+      newUrl: newUrl.substring(0, 100),
+      oldMeetingIdFromUrl,
+      newMeetingIdFromUrl,
+      currentMeetingId: oldMeetingId
+    });
+    
+    // Check if meeting ID changed in URL (switched to different meeting)
+    if (oldMeetingIdFromUrl && newMeetingIdFromUrl && oldMeetingIdFromUrl !== newMeetingIdFromUrl) {
+      console.log(`[SimpleMeetTracker] Meeting ID changed in URL: ${oldMeetingIdFromUrl} → ${newMeetingIdFromUrl}`);
+      
+      if (this.meetingState.isActive) {
+        this.forceEndMeetingInternal('meeting_id_changed');
       }
       
-      return;
+      // Reset state for potential new meeting
+      this.meetingState = {
+        isActive: false,
+        meetingId: newMeetingIdFromUrl,
+        startTime: null,
+        meetingTitle: null
+      };
+      
+      this.participants.clear();
     }
     
     // If we're still on a meeting page, update meeting state
     if (this.isMeetPageFromUrl(newUrl)) {
       console.log('[SimpleMeetTracker] Still on meeting page after URL change - updating state');
       
-      // Update meeting ID if it changed (different meeting)
-      const newMeetingId = this.getMeetingIdFromUrl(newUrl);
-      if (newMeetingId !== this.meetingState.meetingId) {
-        console.log(`[SimpleMeetTracker] Meeting ID changed from ${this.meetingState.meetingId} to ${newMeetingId}`);
-        
-        // End current meeting and start new one
-        if (this.meetingState.isActive) {
-          const now = Date.now();
-          this.meetingState.isActive = false;
-          this.meetingState.endTime = now;
-          this.sendMeetingStateToBackground('ended');
-          this.stopMinuteTracking();
-        }
-        
-        // Clear participants and reset state for new meeting
-        this.participants.clear();
-        this.meetingState = {
-          isActive: false,
-          meetingId: newMeetingId,
-          startTime: null,
-          meetingTitle: null
-        };
-      }
+      // Update stored URL
+      this.currentUrl = newUrl;
       
-      // Re-scan for participants and update state
+      // Re-scan for participants and update state after URL change
       setTimeout(() => {
         this.scanForParticipants();
         this.updateMeetingState();
@@ -948,11 +951,22 @@ class SimpleMeetTracker {
   getMeetingIdFromUrl(url) {
     try {
       const urlObj = new URL(url);
-      const pathParts = urlObj.pathname.split('/');
-      return pathParts[pathParts.length - 1] || 'unknown';
+      const pathParts = urlObj.pathname.split('/').filter(part => part.length > 0);
+      
+      // Google Meet URLs typically have format: meet.google.com/xxx-yyyy-zzz
+      // Extract the last path segment that looks like a meeting ID
+      const lastPart = pathParts[pathParts.length - 1];
+      
+      // Meeting IDs are typically in format xxx-yyyy-zzz (3-4-3 chars with dashes)
+      // or longer alphanumeric strings
+      if (lastPart && (lastPart.includes('-') || lastPart.length >= 8)) {
+        return lastPart;
+      }
+      
+      return null;
     } catch (e) {
       console.warn('[SimpleMeetTracker] Failed to parse URL:', url);
-      return 'unknown';
+      return null;
     }
   }
 
@@ -1075,12 +1089,29 @@ class SimpleMeetTracker {
     console.log(`[SimpleMeetTracker] Force ending meeting due to: ${reason}`);
     
     const now = Date.now();
+    const meetingId = this.meetingState.meetingId;
+    
     this.meetingState.isActive = false;
     this.meetingState.endTime = now;
     this.meetingState.endReason = reason;
     
-    // Send meeting end to background
-    this.sendMeetingStateToBackground('ended');
+    // Special handling for navigation-based endings
+    const navigationReasons = [
+      'navigation_away_from_meet',
+      'navigation_away_from_meeting',
+      'meeting_ended_page',
+      'meeting_id_changed',
+      'page_navigation',
+      'page_unload'
+    ];
+    
+    if (navigationReasons.includes(reason)) {
+      // Send navigation end notification to background
+      this.sendNavigationEndToBackground(meetingId, reason);
+    } else {
+      // Send regular meeting end to background
+      this.sendMeetingStateToBackground('ended');
+    }
     
     // Stop minute tracking
     this.stopMinuteTracking();
@@ -1089,6 +1120,30 @@ class SimpleMeetTracker {
     this.participants.clear();
     
     return true;
+  }
+  
+  // Send navigation end notification to background
+  sendNavigationEndToBackground(meetingId, reason) {
+    if (!chrome?.runtime?.id) {
+      console.log('[SimpleMeetTracker] Extension context invalidated, skipping navigation end notification');
+      return;
+    }
+
+    try {
+      chrome.runtime.sendMessage({
+        type: 'meetingEndedByNavigation',
+        meetingId: meetingId,
+        reason: reason
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.log('[SimpleMeetTracker] Error sending navigation end:', chrome.runtime.lastError.message);
+        } else {
+          console.log('[SimpleMeetTracker] Navigation end sent to background');
+        }
+      });
+    } catch (error) {
+      console.log('[SimpleMeetTracker] Failed to send navigation end to background:', error.message);
+    }
   }
 
   // Manual cleanup method that can be called from dashboard
