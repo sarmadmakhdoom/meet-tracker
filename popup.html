@@ -5,218 +5,340 @@
     <title>Google Meet Tracker</title>
     <style>
         body {
-            width: 300px;
-            min-height: 200px;
+            width: 350px;
+            min-height: 450px;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f8f9fa;
+            background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%);
+            color: #e8eaed;
+            overflow: hidden;
+        }
+
+        /* Glass effect backdrop */
+        .glass-backdrop {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(66, 133, 244, 0.1) 0%, rgba(52, 168, 83, 0.05) 100%);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
         }
 
         .header {
-            background: #4285f4;
+            background: linear-gradient(135deg, #1a1f2e 0%, #0f1419 100%);
             color: white;
-            padding: 16px;
-            text-align: center;
-            font-weight: 500;
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .header-title {
+            font-weight: 600;
+            font-size: 14px;
+            letter-spacing: 0.5px;
+        }
+        
+        .dashboard-icon {
+            width: 24px;
+            height: 24px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            color: white;
+        }
+        
+        .dashboard-icon:hover {
+            background: rgba(255,255,255,0.3);
+            transform: scale(1.05);
         }
 
         .content {
             padding: 16px;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .status-card {
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
         }
 
         .status {
             display: flex;
             align-items: center;
-            margin-bottom: 16px;
-            padding: 12px;
-            border-radius: 8px;
             font-weight: 500;
+            font-size: 14px;
+        }
+
+        .status:not(.has-duration) {
+            margin-bottom: 0;
+        }
+
+        .status.has-duration {
+            margin-bottom: 12px;
         }
 
         .status.active {
-            background: #e8f5e8;
-            color: #2d7d2d;
-            border: 1px solid #a8d5a8;
+            color: #34a853;
         }
 
         .status.inactive {
-            background: #f5f5f5;
-            color: #666;
-            border: 1px solid #ddd;
-        }
-
-        .status-indicator {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
+            color: #9aa0a6;
         }
 
         .status.waiting {
-            background: #fff8e1;
-            color: #f57c00;
-            border: 1px solid #ffecb3;
+            color: #fbbc04;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .status.active .status-indicator {
+            background: #34a853;
+            animation: pulse 2s infinite;
         }
 
         .status.waiting .status-indicator {
-            background: #f57c00;
+            background: #fbbc04;
+            animation: pulse 1.5s infinite;
         }
 
         .status.inactive .status-indicator {
-            background: #999;
+            background: #5f6368;
         }
 
         @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.2); }
         }
 
-        .participants {
-            margin-bottom: 16px;
-        }
-
-        .participants h3 {
-            margin: 0 0 8px 0;
-            font-size: 14px;
-            color: #333;
-        }
-
-        .participant-list {
-            max-height: 100px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            background: white;
-        }
-
-        .participant {
-            padding: 8px 12px;
-            border-bottom: 1px solid #eee;
+        .section-title {
             font-size: 13px;
+            font-weight: 600;
+            color: #b8bcc3;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
-        .participant:last-child {
-            border-bottom: none;
+        .meeting-duration {
+            font-size: 12px;
+            color: #9aa0a6;
+            margin-top: 4px;
         }
 
-        .no-participants {
+        .recent-meetings {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
             padding: 16px;
-            text-align: center;
-            color: #666;
-            font-size: 13px;
-            font-style: italic;
         }
 
-        .meeting-info {
-            background: white;
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 12px;
-            margin-bottom: 16px;
-            font-size: 13px;
-        }
-
-        .meeting-info .label {
-            font-weight: 500;
-            color: #333;
-        }
-
-        .meeting-info .value {
-            color: #666;
-            margin-bottom: 4px;
-        }
-
-        .buttons {
+        .meeting-item {
             display: flex;
-            gap: 8px;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            transition: all 0.2s ease;
         }
 
-        button {
-            flex: 1;
-            padding: 10px;
-            border: none;
+        .meeting-item:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .meeting-item:hover {
+            background: rgba(255,255,255,0.05);
             border-radius: 6px;
+            margin: 0 -8px;
+            padding: 10px 8px;
+        }
+
+        .meeting-left {
+            flex: 1;
+        }
+
+        .meeting-title {
             font-size: 13px;
+            color: #e8eaed;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .meeting-time {
+            font-size: 11px;
+            color: #b8bcc3;
+            font-weight: 400;
+        }
+
+        .meeting-stats {
+            font-size: 11px;
+            color: #9aa0a6;
+            margin-top: 2px;
+        }
+
+        .meeting-right {
+            text-align: right;
+        }
+
+        .meeting-duration-badge {
+            background: rgba(66, 133, 244, 0.2);
+            color: #4285f4;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
             font-weight: 500;
-            cursor: pointer;
-            transition: background-color 0.2s;
         }
 
-        .btn-primary {
-            background: #4285f4;
-            color: white;
+        .participant-count {
+            font-size: 10px;
+            color: #9aa0a6;
+            margin-top: 2px;
         }
 
-        .btn-primary:hover {
-            background: #3367d6;
-        }
-
-        .btn-secondary {
-            background: #f1f3f4;
-            color: #5f6368;
-            border: 1px solid #dadce0;
-        }
-
-        .btn-secondary:hover {
-            background: #e8eaed;
+        .no-meetings {
+            text-align: center;
+            color: #9aa0a6;
+            font-size: 12px;
+            padding: 20px 0;
         }
 
         .loading {
             text-align: center;
-            padding: 20px;
-            color: #666;
+            padding: 40px 20px;
+            color: #9aa0a6;
+            font-size: 14px;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #4285f4;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
         .error {
-            background: #fce8e6;
-            color: #d93025;
+            background: rgba(234, 67, 53, 0.1);
+            color: #ea4335;
             padding: 12px;
             border-radius: 8px;
-            font-size: 13px;
+            font-size: 12px;
             margin-bottom: 16px;
+            border: 1px solid rgba(234, 67, 53, 0.2);
+        }
+
+        .current-meeting {
+            background: rgba(52, 168, 83, 0.1);
+            border: 1px solid rgba(52, 168, 83, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .current-meeting-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #34a853;
+            margin-bottom: 8px;
+        }
+
+        .current-meeting-info {
+            font-size: 12px;
+            color: #b8bcc3;
+            line-height: 1.4;
+        }
+
+        .participants-chip {
+            display: inline-block;
+            background: rgba(255,255,255,0.1);
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            color: #e8eaed;
+            margin: 2px 2px 2px 0;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <div>Google Meet Tracker</div>
-    </div>
-
-    <div class="content">
-        <div id="loading" class="loading">
-            Loading meeting status...
+    <div class="glass-backdrop"></div>
+    <div class="container">
+        <div class="header">
+            <div class="header-title">Google Meet Tracker</div>
+            <button id="dashboard-btn" class="dashboard-icon" title="Open Dashboard">📊</button>
         </div>
 
-        <div id="error" class="error" style="display: none;"></div>
-
-        <div id="main-content" style="display: none;">
-            <div id="meeting-status" class="status">
-                <div class="status-indicator"></div>
-                <span id="status-text">Not in meeting</span>
+        <div class="content">
+            <div id="loading" class="loading">
+                Loading...
             </div>
 
-            <div id="meeting-info" class="meeting-info" style="display: none;">
-                <div class="label">Meeting Duration:</div>
-                <div class="value" id="meeting-duration">--</div>
-                <div class="label">Meeting Started:</div>
-                <div class="value" id="meeting-start">--</div>
-            </div>
+            <div id="error" class="error" style="display: none;"></div>
 
-            <div id="participants-section" class="participants" style="display: none;">
-                <h3>Current Participants (<span id="participant-count">0</span>)</h3>
-                <div class="participant-list" id="participant-list">
-                    <div class="no-participants">No participants detected</div>
+            <div id="main-content" style="display: none;">
+                <!-- Current Meeting Status -->
+                <div class="status-card">
+                    <div id="meeting-status" class="status">
+                        <div class="status-indicator"></div>
+                        <span id="status-text">Not in meeting</span>
+                    </div>
+                    <div class="meeting-duration" id="current-duration" style="display: none;"></div>
                 </div>
-            </div>
 
-            <div class="buttons">
-                <button id="dashboard-btn" class="btn-primary">
-                    📊 Dashboard
-                </button>
-                <button id="refresh-btn" class="btn-secondary">
-                    🔄 Refresh
-                </button>
+                <!-- Current Meeting Info -->
+                <div id="current-meeting" class="current-meeting" style="display: none;">
+                    <div class="current-meeting-title">Active Meeting</div>
+                    <div class="current-meeting-info">
+                        <div>Duration: <span id="meeting-duration">--</span></div>
+                        <div>Started: <span id="meeting-start">--</span></div>
+                        <div id="current-participants" style="margin-top: 8px;"></div>
+                    </div>
+                </div>
+
+                <!-- Recent Meetings -->
+                <div class="recent-meetings">
+                    <div class="section-title">Recent Meetings</div>
+                    <div id="recent-meetings-list">
+                        <div class="no-meetings">No recent meetings found</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

@@ -6,9 +6,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function initializePopup() {
     try {
-        // Get current meeting state
-        const state = await getCurrentMeetingState();
+        // Get current meeting state and recent meetings in parallel
+        const [state, recentMeetings] = await Promise.all([
+            getCurrentMeetingState(),
+            getRecentMeetings()
+        ]);
+        
         displayMeetingState(state);
+        displayRecentMeetings(recentMeetings);
         
         // Set up event listeners
         setupEventListeners();
@@ -21,6 +26,35 @@ async function initializePopup() {
         console.error('Error initializing popup:', error);
         showError('Failed to load meeting status');
     }
+}
+
+function getRecentMeetings() {
+    return new Promise((resolve) => {
+        try {
+            if (!chrome.runtime || !chrome.runtime.id) {
+                resolve([]);
+                return;
+            }
+            
+            chrome.runtime.sendMessage({ action: 'getMeetings' }, (response) => {
+                if (chrome.runtime.lastError || !Array.isArray(response)) {
+                    resolve([]);
+                    return;
+                }
+                
+                // Get last 5 meetings, sorted by start time
+                const recentMeetings = response
+                    .filter(m => m.endTime) // Only completed meetings
+                    .sort((a, b) => b.startTime - a.startTime)
+                    .slice(0, 5);
+                    
+                resolve(recentMeetings);
+            });
+        } catch (error) {
+            console.log('Error getting recent meetings:', error);
+            resolve([]);
+        }
+    });
 }
 
 function getCurrentMeetingState() {
@@ -79,28 +113,27 @@ function getCurrentMeetingState() {
 function displayMeetingState(state) {
     const statusElement = document.getElementById('meeting-status');
     const statusText = document.getElementById('status-text');
-    const meetingInfo = document.getElementById('meeting-info');
-    const participantsSection = document.getElementById('participants-section');
+    const currentMeetingCard = document.getElementById('current-meeting');
+    const currentDuration = document.getElementById('current-duration');
     
     // Reset all states first
     statusElement.className = 'status';
-    meetingInfo.style.display = 'none';
-    participantsSection.style.display = 'none';
+    currentMeetingCard.style.display = 'none';
+    currentDuration.style.display = 'none';
 
     switch (state.state) {
         case 'active':
-            statusElement.classList.add('active');
-            statusText.textContent = 'In meeting';
-            meetingInfo.style.display = 'block';
-            participantsSection.style.display = 'block';
-            updateMeetingInfo(state.currentMeeting);
-            displayParticipants(state.participants);
+            statusElement.classList.add('active', 'has-duration');
+            statusText.textContent = 'In active meeting';
+            currentMeetingCard.style.display = 'block';
+            currentDuration.style.display = 'block';
+            updateCurrentMeetingInfo(state.currentMeeting, state.participants);
             break;
         case 'waiting':
-            statusElement.classList.add('waiting');
-            statusText.textContent = 'Waiting in lobby';
-            participantsSection.style.display = 'block'; // Show devices in lobby
-            displayParticipants(state.participants);
+            statusElement.classList.add('waiting', 'has-duration');
+            statusText.textContent = 'Waiting in meeting lobby';
+            currentDuration.textContent = 'Waiting to join...';
+            currentDuration.style.display = 'block';
             break;
         default: // 'none'
             statusElement.classList.add('inactive');
@@ -109,46 +142,110 @@ function displayMeetingState(state) {
     }
 }
 
-function updateMeetingInfo(meeting) {
+function updateCurrentMeetingInfo(meeting, participants) {
     const durationElement = document.getElementById('meeting-duration');
     const startElement = document.getElementById('meeting-start');
+    const currentDuration = document.getElementById('current-duration');
+    const currentParticipants = document.getElementById('current-participants');
     
-    if (meeting.startTime) {
+    if (meeting && meeting.startTime) {
         const startTime = new Date(meeting.startTime);
         const now = new Date();
-        const duration = Math.floor((now - startTime) / (1000 * 60)); // minutes
+        const durationMs = now - startTime;
+        const minutes = Math.floor(durationMs / (1000 * 60));
         
         startElement.textContent = startTime.toLocaleTimeString();
-        durationElement.textContent = `${duration} minutes`;
+        durationElement.textContent = formatDuration(durationMs);
+        currentDuration.textContent = `Active for ${formatDuration(durationMs)}`;
+        
+        // Display participants as chips
+        const uniqueParticipants = [...new Set(participants)].filter(p => p && p.trim().length > 0);
+        if (uniqueParticipants.length > 0) {
+            const participantChips = uniqueParticipants.map(p => 
+                `<span class="participants-chip">${escapeHtml(p)}</span>`
+            ).join('');
+            currentParticipants.innerHTML = `<div style="margin-bottom: 4px; color: #9aa0a6; font-size: 11px;">${uniqueParticipants.length} participants:</div>${participantChips}`;
+        } else {
+            currentParticipants.innerHTML = '<div style="color: #9aa0a6; font-size: 11px;">No participants detected</div>';
+        }
     }
 }
 
-function displayParticipants(participants) {
-    const participantList = document.getElementById('participant-list');
-    const participantCount = document.getElementById('participant-count');
+function displayRecentMeetings(meetings) {
+    const container = document.getElementById('recent-meetings-list');
     
-    // Names are now cleaned at the source (content.js), just ensure uniqueness
-    const uniqueParticipants = [...new Set(participants)].filter(p => p && p.trim().length > 0);
+    if (!meetings || meetings.length === 0) {
+        container.innerHTML = '<div class="no-meetings">No recent meetings found</div>';
+        return;
+    }
     
-    participantCount.textContent = uniqueParticipants.length;
-    
-    if (uniqueParticipants.length === 0) {
-        participantList.innerHTML = '<div class="no-participants">No participants detected</div>';
-    } else {
-        const participantElements = uniqueParticipants.map(participant => 
-            `<div class="participant">${escapeHtml(participant)}</div>`
-        ).join('');
+    const meetingElements = meetings.map(meeting => {
+        const startTime = new Date(meeting.startTime);
+        const duration = meeting.endTime ? (meeting.endTime - meeting.startTime) : 0;
+        const participantCount = meeting.participants ? meeting.participants.length : 0;
         
-        participantList.innerHTML = participantElements;
+        // Get meeting title or generate a default one
+        const meetingTitle = meeting.title || `Meeting ${meeting.id}`;
+        const truncatedTitle = meetingTitle.length > 25 ? meetingTitle.substring(0, 22) + '...' : meetingTitle;
+        
+        // Format time - show today's meetings as time only, others as date + time
+        const isToday = startTime.toDateString() === new Date().toDateString();
+        const timeDisplay = isToday 
+            ? startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : startTime.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + 
+              startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        return `
+            <div class="meeting-item">
+                <div class="meeting-left">
+                    <div class="meeting-title">${escapeHtml(truncatedTitle)}</div>
+                    <div class="meeting-time">${timeDisplay}</div>
+                    <div class="meeting-stats">${participantCount} participant${participantCount !== 1 ? 's' : ''}</div>
+                </div>
+                <div class="meeting-right">
+                    <div class="meeting-duration-badge">${formatDuration(duration)}</div>
+                    <div class="participant-count">${getRelativeTime(startTime)}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = meetingElements;
+}
+
+function formatDuration(ms) {
+    if (ms <= 0) return '0m';
+    
+    const minutes = Math.floor(ms / (1000 * 60));
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+        const remainingMinutes = minutes % 60;
+        return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+    }
+    return `${minutes}m`;
+}
+
+function getRelativeTime(date) {
+    const now = new Date();
+    const diffMs = now - date;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffHours / 24);
+    
+    if (diffDays > 0) {
+        return `${diffDays}d ago`;
+    } else if (diffHours > 0) {
+        return `${diffHours}h ago`;
+    } else {
+        const diffMinutes = Math.floor(diffMs / (1000 * 60));
+        return diffMinutes > 0 ? `${diffMinutes}m ago` : 'Just now';
     }
 }
+
 
 function setupEventListeners() {
     // Dashboard button
     document.getElementById('dashboard-btn').addEventListener('click', openDashboard);
-    
-    // Refresh button
-    document.getElementById('refresh-btn').addEventListener('click', refreshMeetingState);
 }
 
 function openDashboard() {
