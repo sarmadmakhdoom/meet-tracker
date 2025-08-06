@@ -268,6 +268,12 @@ function applyFilters() {
     const selectedParticipant = document.getElementById('participant-select').value;
 
     filteredMeetings = allMeetings.filter(meeting => {
+        // Validate meeting has valid startTime
+        if (!meeting.startTime || !isValidDate(meeting.startTime)) {
+            console.warn('Invalid startTime for meeting:', meeting);
+            return false;
+        }
+        
         const meetingDate = new Date(meeting.startTime).toISOString().split('T')[0];
         if (startDate && meetingDate < startDate) return false;
         if (endDate && meetingDate > endDate) return false;
@@ -1197,6 +1203,13 @@ function formatDuration(ms) {
 
 function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Helper function to validate dates
+function isValidDate(value) {
+    if (!value) return false;
+    const date = new Date(value);
+    return date instanceof Date && !isNaN(date.getTime()) && date.getTime() > 0;
 }
 
 function showError(message) {

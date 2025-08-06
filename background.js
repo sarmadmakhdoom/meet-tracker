@@ -90,8 +90,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     break;
                     
                 case 'clearAllData':
-                    const result = await clearAllData();
-                    sendResponse(result);
+                    const clearResult = await clearAllData();
+                    sendResponse(clearResult);
                     break;
                     
                 case 'logMinuteData':
@@ -104,6 +104,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         networkParticipants: currentMeetingState.networkParticipants,
                         totalParticipants: currentMeetingState.participants.length,
                         state: currentMeetingState.state
+                    });
+                    break;
+                    
+                case 'forceEndMeeting':
+                    const forceEndResult = await forceEndCurrentMeeting();
+                    sendResponse(forceEndResult);
+                    break;
+                    
+                case 'getRealTimeState':
+                    sendResponse({
+                        currentMeeting: currentMeetingState.currentMeeting,
+                        state: currentMeetingState.state,
+                        participants: currentMeetingState.participants,
+                        lastUpdate: Date.now()
                     });
                     break;
                     
@@ -459,6 +473,67 @@ async function clearAllData() {
             resolve({ success: true });
         });
     });
+}
+
+// Force end current meeting (zombie cleanup)
+async function forceEndCurrentMeeting() {
+    if (currentMeetingState.state !== 'active' || !currentMeetingState.currentMeeting) {
+        return { success: false, message: 'No active meeting to end' };
+    }
+    
+    console.log('🔧 Force ending current meeting:', currentMeetingState.currentMeeting.title);
+    
+    try {
+        // First, try to send message to content script to end the meeting properly
+        const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
+        
+        if (tabs.length > 0) {
+            for (const tab of tabs) {
+                try {
+                    await chrome.tabs.sendMessage(tab.id, { type: 'force_end_meeting' });
+                    console.log('🔧 Sent force end message to tab:', tab.id);
+                } catch (error) {
+                    console.log('Could not send force end message to tab:', tab.id, error.message);
+                }
+            }
+        }
+        
+        // Force end the meeting in background state regardless
+        const endTime = Date.now();
+        const finalMeeting = {
+            ...currentMeetingState.currentMeeting,
+            endTime,
+            participants: currentMeetingState.participants,
+            forceEnded: true
+        };
+        
+        // Save the meeting
+        await saveMeeting(finalMeeting);
+        
+        const duration = endTime - finalMeeting.startTime;
+        console.log(`🔧 Force ended meeting after ${Math.round(duration / 60000)} minutes`);
+        
+        // Reset state
+        currentMeetingState = {
+            state: 'none',
+            participants: [],
+            currentMeeting: null,
+            networkParticipants: 0
+        };
+        
+        // Update icon
+        updateIcon('none', []);
+        
+        return { 
+            success: true, 
+            message: `Meeting "${finalMeeting.title}" ended successfully`,
+            duration: Math.round(duration / 60000)
+        };
+        
+    } catch (error) {
+        console.error('Error force ending meeting:', error);
+        return { success: false, message: error.message };
+    }
 }
 
 // Tab management

@@ -295,6 +295,28 @@
             color: #e8eaed;
             margin: 2px 2px 2px 0;
         }
+
+        .action-btn {
+            background: rgba(234, 67, 53, 0.2);
+            color: #ea4335;
+            border: 1px solid rgba(234, 67, 53, 0.3);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .action-btn:hover {
+            background: rgba(234, 67, 53, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -329,6 +351,9 @@
                         <div>Duration: <span id="meeting-duration">--</span></div>
                         <div>Started: <span id="meeting-start">--</span></div>
                         <div id="current-participants" style="margin-top: 8px;"></div>
+                    </div>
+                    <div class="meeting-actions" style="margin-top: 12px;">
+                        <button id="force-end-btn" class="action-btn" title="Force end zombie meeting">🔧 End Meeting</button>
                     </div>
                 </div>
 

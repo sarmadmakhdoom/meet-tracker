@@ -286,6 +286,9 @@ function getRelativeTime(date) {
 function setupEventListeners() {
     // Dashboard button
     document.getElementById('dashboard-btn').addEventListener('click', openDashboard);
+    
+    // Force end meeting button
+    document.getElementById('force-end-btn').addEventListener('click', forceEndMeeting);
 }
 
 function openDashboard() {
@@ -352,6 +355,65 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Force end current meeting (zombie cleanup)
+async function forceEndMeeting() {
+    const forceEndBtn = document.getElementById('force-end-btn');
+    const originalText = forceEndBtn.textContent;
+    
+    // Show loading state
+    forceEndBtn.textContent = '🔄 Ending...';
+    forceEndBtn.disabled = true;
+    
+    try {
+        if (!chrome.runtime || !chrome.runtime.id) {
+            showError('Extension context invalidated. Please refresh.');
+            return;
+        }
+        
+        // Send force end message to background script
+        chrome.runtime.sendMessage({ type: 'forceEndMeeting' }, (response) => {
+            if (chrome.runtime.lastError) {
+                showError('Failed to end meeting: ' + chrome.runtime.lastError.message);
+                return;
+            }
+            
+            if (response && response.success) {
+                // Show success message
+                const statusText = document.getElementById('status-text');
+                const currentMeetingCard = document.getElementById('current-meeting');
+                
+                statusText.textContent = 'Meeting ended successfully';
+                currentMeetingCard.style.display = 'none';
+                
+                // Refresh the popup state
+                setTimeout(async () => {
+                    try {
+                        const state = await getCurrentMeetingState();
+                        displayMeetingState(state);
+                    } catch (error) {
+                        console.error('Error refreshing after force end:', error);
+                    }
+                }, 1000);
+                
+                // Show confirmation
+                showError(`Success: ${response.message || 'Meeting ended'}`);
+                
+            } else {
+                showError(response?.message || 'No active meeting to end');
+            }
+        });
+        
+    } catch (error) {
+        showError('Error ending meeting: ' + error.message);
+    } finally {
+        // Reset button after 2 seconds
+        setTimeout(() => {
+            forceEndBtn.textContent = originalText;
+            forceEndBtn.disabled = false;
+        }, 2000);
+    }
 }
 
 // Auto-refresh every 10 seconds if popup is open
