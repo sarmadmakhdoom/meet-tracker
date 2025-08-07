@@ -612,15 +612,19 @@ async function getRecentSessions(meetingId) {
 
 // End current active session for a meeting
 async function endActiveSession(meetingId, reason = 'meeting_ended') {
+    console.log(`🔧 endActiveSession called for meeting: ${meetingId}, reason: ${reason}`);
+    
     const sessionId = meetingToSessionMap[meetingId];
     if (!sessionId) {
         console.log(`⚠️ No active session found for meeting: ${meetingId}`);
+        console.log('📋 Current meetingToSessionMap:', Object.keys(meetingToSessionMap));
         return;
     }
     
     const session = activeSessions[sessionId];
     if (!session) {
         console.log(`⚠️ Session ${sessionId} not found in active sessions`);
+        console.log('📋 Current active sessions:', Object.keys(activeSessions));
         return;
     }
     
@@ -628,21 +632,65 @@ async function endActiveSession(meetingId, reason = 'meeting_ended') {
     const duration = endTime - session.startTime;
     
     console.log(`🚫 Ending session: ${sessionId} for meeting: ${meetingId} (${Math.round(duration / 60000)}m, reason: ${reason})`);
+    console.log(`📊 Session details before ending:`, {
+        sessionId: session.sessionId,
+        meetingId: session.meetingId,
+        title: session.title,
+        startTime: new Date(session.startTime).toISOString(),
+        participantCount: session.participants ? session.participants.length : 0,
+        hasMinuteLogs: session.minuteLogs ? session.minuteLogs.length : 0
+    });
     
     // Update session with end time
     session.endTime = endTime;
     session.isActive = false;
     session.endReason = reason;
     
-    // Save the completed session to storage
+    // Save the completed session to storage with comprehensive error handling
+    let sessionSaved = false;
     try {
+        console.log('💾 Attempting to save session to storage...');
         const storage = await ensureStorageManager();
-        if (storage) {
+        if (!storage) {
+            console.error('❌ Storage manager not available!');
+            // Try to save to old meeting format as fallback
+            console.log('🔄 Attempting fallback to old meeting format...');
+            await saveFallbackMeeting(session);
+            console.log('✅ Saved session as fallback meeting');
+            sessionSaved = true;
+        } else {
+            console.log('📝 Saving session to IndexedDB...');
             await storage.saveMeetingSession(session);
             console.log(`✅ Session ${sessionId} saved to storage with ${Math.round(duration / 60000)}m duration`);
+            sessionSaved = true;
         }
     } catch (error) {
-        console.error('❌ Error saving ended session:', error);
+        console.error('❌ Error saving ended session:', {
+            error: error.message,
+            errorName: error.name,
+            sessionId,
+            meetingId,
+            sessionTitle: session.title
+        });
+        
+        // Try fallback save
+        try {
+            console.log('🔄 Attempting fallback save after error...');
+            await saveFallbackMeeting(session);
+            console.log('✅ Fallback save successful');
+            sessionSaved = true;
+        } catch (fallbackError) {
+            console.error('❌ Fallback save also failed:', fallbackError.message);
+        }
+    }
+    
+    if (!sessionSaved) {
+        console.error(`❌ CRITICAL: Failed to save session ${sessionId} - meeting data may be lost!`);
+        // Keep session data in memory for manual recovery
+        session._failedToSave = true;
+        session._failedAt = Date.now();
+        console.log('🔄 Keeping failed session in memory for manual recovery');
+        return; // Don't clean up if we couldn't save
     }
     
     // Clean up active session tracking
@@ -650,6 +698,25 @@ async function endActiveSession(meetingId, reason = 'meeting_ended') {
     delete meetingToSessionMap[meetingId];
     
     console.log(`🧹 Cleaned up session tracking for ${sessionId}`);
+}
+
+// Fallback function to save session as old-style meeting
+async function saveFallbackMeeting(session) {
+    const fallbackMeeting = {
+        id: session.meetingId,
+        title: session.title,
+        startTime: session.startTime,
+        endTime: session.endTime,
+        participants: session.participants || [],
+        minuteLogs: session.minuteLogs || [],
+        url: session.url,
+        sessionId: session.sessionId, // Keep reference to original session
+        dataSource: session.dataSource,
+        endReason: session.endReason,
+        savedAsFallback: true
+    };
+    
+    await saveMeeting(fallbackMeeting);
 }
 
 // Helper function to find existing or recent meeting (for rejoin logic)
@@ -1441,5 +1508,74 @@ setInterval(async () => {
     }
 }, 24 * 60 * 60 * 1000); // Run every 24 hours
 
+// Add debugging functions to global scope for manual inspection
+self.debugMeetingTracker = {
+    getCurrentState: () => currentMeetingState,
+    getActiveSessions: () => activeSessions,
+    getMeetingToSessionMap: () => meetingToSessionMap,
+    
+    // Check for failed sessions that couldn't be saved
+    getFailedSessions: () => {
+        const failed = Object.values(activeSessions).filter(session => session._failedToSave);
+        console.log(`🔍 Found ${failed.length} failed sessions:`);
+        failed.forEach(session => {
+            console.log(`  - ${session.sessionId}: ${session.title} (failed at ${new Date(session._failedAt).toISOString()})`);
+        });
+        return failed;
+    },
+    
+    // Manually retry saving failed sessions
+    retryFailedSessions: async () => {
+        const failed = Object.values(activeSessions).filter(session => session._failedToSave);
+        console.log(`🔄 Retrying ${failed.length} failed sessions...`);
+        
+        let retryResults = [];
+        for (const session of failed) {
+            try {
+                const storage = await ensureStorageManager();
+                if (storage) {
+                    await storage.saveMeetingSession(session);
+                    console.log(`✅ Successfully saved failed session: ${session.sessionId}`);
+                    // Remove failed marker
+                    delete session._failedToSave;
+                    delete session._failedAt;
+                    retryResults.push({ sessionId: session.sessionId, success: true });
+                } else {
+                    await saveFallbackMeeting(session);
+                    console.log(`✅ Saved failed session as fallback: ${session.sessionId}`);
+                    delete session._failedToSave;
+                    delete session._failedAt;
+                    retryResults.push({ sessionId: session.sessionId, success: true, method: 'fallback' });
+                }
+            } catch (error) {
+                console.error(`❌ Failed to retry session ${session.sessionId}:`, error.message);
+                retryResults.push({ sessionId: session.sessionId, success: false, error: error.message });
+            }
+        }
+        
+        console.log('🔄 Retry results:', retryResults);
+        return retryResults;
+    },
+    
+    // Force end a specific session
+    forceEndSession: async (sessionId, reason = 'manual_debug') => {
+        const session = activeSessions[sessionId];
+        if (!session) {
+            console.log(`⚠️ Session ${sessionId} not found`);
+            return { success: false, message: 'Session not found' };
+        }
+        
+        try {
+            await endActiveSession(session.meetingId, reason);
+            console.log(`✅ Force ended session: ${sessionId}`);
+            return { success: true };
+        } catch (error) {
+            console.error(`❌ Error force ending session ${sessionId}:`, error);
+            return { success: false, error: error.message };
+        }
+    }
+};
+
 // Debug info
 console.log('🌐 Network-enhanced Google Meet Tracker background service ready');
+console.log('🔧 Debug functions available: self.debugMeetingTracker');

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Storage Fix</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        .test { margin: 10px 0; padding: 10px; border: 1px solid #ddd; }
+        .success { background: #e8f5e8; border-color: #4caf50; }
+        .error { background: #ffeaea; border-color: #f44336; }
+        button { padding: 10px; margin: 5px; font-size: 14px; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Test Meeting Extension Storage Fix</h1>
+    
+    <div>
+        <button onclick="testStorageInit()">1. Test Storage Initialization</button>
+        <button onclick="testSessionSave()">2. Test Session Save</button>
+        <button onclick="testSessionRetrieval()">3. Test Session Retrieval</button>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+    
+    <div id="results"></div>
+
+    <script src="storage-manager.js"></script>
+    <script>
+        let storageManager = null;
+        let testResults = [];
+
+        function addResult(testName, success, message, details = null) {
+            const result = {
+                test: testName,
+                success,
+                message,
+                details,
+                timestamp: new Date().toISOString()
+            };
+            
+            testResults.push(result);
+            
+            const resultsDiv = document.getElementById('results');
+            const testDiv = document.createElement('div');
+            testDiv.className = `test ${success ? 'success' : 'error'}`;
+            
+            let html = `<h3>${success ? '✅' : '❌'} ${testName}</h3>`;
+            html += `<p><strong>Result:</strong> ${message}</p>`;
+            html += `<p><strong>Time:</strong> ${result.timestamp}</p>`;
+            
+            if (details) {
+                html += `<p><strong>Details:</strong></p><pre>${JSON.stringify(details, null, 2)}</pre>`;
+            }
+            
+            testDiv.innerHTML = html;
+            resultsDiv.insertBefore(testDiv, resultsDiv.firstChild);
+        }
+
+        async function testStorageInit() {
+            try {
+                console.log('🔍 Testing storage initialization...');
+                
+                storageManager = new MeetingStorageManager();
+                await storageManager.init();
+                
+                if (storageManager.db) {
+                    addResult(
+                        'Storage Initialization', 
+                        true, 
+                        'Storage manager initialized successfully',
+                        {
+                            dbName: storageManager.dbName,
+                            dbVersion: storageManager.dbVersion,
+                            objectStores: Array.from(storageManager.db.objectStoreNames)
+                        }
+                    );
+                } else {
+                    addResult('Storage Initialization', false, 'Database is null after initialization');
+                }
+            } catch (error) {
+                addResult('Storage Initialization', false, `Initialization failed: ${error.message}`, error);
+            }
+        }
+
+        async function testSessionSave() {
+            try {
+                if (!storageManager) {
+                    await testStorageInit();
+                }
+                
+                console.log('💾 Testing session save...');
+                
+                // Create a test session
+                const testSession = {
+                    sessionId: `test_session_${Date.now()}`,
+                    meetingId: 'test-meeting-123',
+                    title: 'Test Meeting Session',
+                    startTime: Date.now() - 300000, // 5 minutes ago
+                    endTime: Date.now(),
+                    participants: [
+                        { name: 'Test User 1', id: 'user1' },
+                        { name: 'Test User 2', id: 'user2' }
+                    ],
+                    minuteLogs: [
+                        {
+                            minute: 1,
+                            timestamp: Date.now() - 240000,
+                            participants: ['Test User 1', 'Test User 2'],
+                            participantCount: 2
+                        }
+                    ],
+                    dataSource: 'test',
+                    isActive: false,
+                    endReason: 'test_completed'
+                };
+                
+                await storageManager.saveMeetingSession(testSession);
+                
+                addResult(
+                    'Session Save', 
+                    true, 
+                    'Test session saved successfully',
+                    {
+                        sessionId: testSession.sessionId,
+                        meetingId: testSession.meetingId,
+                        duration: Math.round((testSession.endTime - testSession.startTime) / 60000) + ' minutes',
+                        participantCount: testSession.participants.length
+                    }
+                );
+                
+            } catch (error) {
+                addResult('Session Save', false, `Session save failed: ${error.message}`, error);
+            }
+        }
+
+        async function testSessionRetrieval() {
+            try {
+                if (!storageManager) {
+                    await testStorageInit();
+                }
+                
+                console.log('📋 Testing session retrieval...');
+                
+                const sessions = await storageManager.getAllSessions();
+                
+                if (sessions && Array.isArray(sessions)) {
+                    addResult(
+                        'Session Retrieval', 
+                        true, 
+                        `Retrieved ${sessions.length} sessions from storage`,
+                        {
+                            sessionCount: sessions.length,
+                            sessions: sessions.map(s => ({
+                                sessionId: s.sessionId,
+                                meetingId: s.meetingId,
+                                title: s.title,
+                                duration: s.duration ? Math.round(s.duration / 60000) + ' minutes' : 'ongoing'
+                            }))
+                        }
+                    );
+                } else {
+                    addResult('Session Retrieval', false, 'Failed to retrieve sessions - got null or non-array result');
+                }
+                
+            } catch (error) {
+                addResult('Session Retrieval', false, `Session retrieval failed: ${error.message}`, error);
+            }
+        }
+
+        async function runAllTests() {
+            clearResults();
+            console.log('🧪 Running all tests...');
+            
+            addResult('Test Suite', true, 'Starting comprehensive storage tests...', null);
+            
+            await testStorageInit();
+            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+            
+            await testSessionSave();
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            await testSessionRetrieval();
+            
+            const successCount = testResults.filter(r => r.success && r.test !== 'Test Suite').length;
+            const totalTests = testResults.length - 1; // Exclude the "Test Suite" result
+            
+            addResult(
+                'Test Suite Complete', 
+                successCount === totalTests, 
+                `${successCount}/${totalTests} tests passed`,
+                {
+                    passed: successCount,
+                    total: totalTests,
+                    allTestsPassed: successCount === totalTests
+                }
+            );
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            testResults = [];
+        }
+
+        // Auto-run tests when page loads
+        window.addEventListener('load', () => {
+            setTimeout(runAllTests, 1000);
+        });
+    </script>
+</body>
+</html>

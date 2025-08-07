@@ -617,6 +617,26 @@ class MeetingStorageManager {
             try {
                 console.log(`🔍 Getting sessions for meeting: ${meetingId}`);
                 
+                // Check if database is available
+                if (!this.db) {
+                    console.error('❌ Database not available in getMeetingSessions');
+                    console.log('🔄 Attempting to reinitialize database...');
+                    // Try to reinitialize
+                    this.init().then(() => {
+                        if (!this.db) {
+                            console.error('❌ Database reinitialize failed');
+                            resolve([]); // Return empty array instead of rejecting
+                            return;
+                        }
+                        // Retry the operation
+                        this.getMeetingSessions(meetingId).then(resolve).catch(reject);
+                    }).catch(error => {
+                        console.error('❌ Database reinitialize error:', error);
+                        resolve([]); // Return empty array instead of rejecting
+                    });
+                    return;
+                }
+                
                 const transaction = this.db.transaction(['meetingSessions'], 'readonly');
                 const store = transaction.objectStore('meetingSessions');
                 const index = store.index('meetingId');
@@ -637,7 +657,7 @@ class MeetingStorageManager {
                 };
             } catch (error) {
                 console.error('❌ Error in getMeetingSessions:', error);
-                reject(error);
+                resolve([]); // Return empty array instead of rejecting
             }
         });
     }
@@ -646,6 +666,26 @@ class MeetingStorageManager {
     async getAllSessions(options = {}) {
         return new Promise((resolve, reject) => {
             try {
+                // Check if database is available
+                if (!this.db) {
+                    console.error('❌ Database not available in getAllSessions');
+                    console.log('🔄 Attempting to reinitialize database...');
+                    // Try to reinitialize
+                    this.init().then(() => {
+                        if (!this.db) {
+                            console.error('❌ Database reinitialize failed');
+                            resolve([]); // Return empty array instead of rejecting
+                            return;
+                        }
+                        // Retry the operation
+                        this.getAllSessions(options).then(resolve).catch(reject);
+                    }).catch(error => {
+                        console.error('❌ Database reinitialize error:', error);
+                        resolve([]); // Return empty array instead of rejecting
+                    });
+                    return;
+                }
+                
                 const transaction = this.db.transaction(['meetingSessions'], 'readonly');
                 const store = transaction.objectStore('meetingSessions');
                 let request;
@@ -678,7 +718,7 @@ class MeetingStorageManager {
                 request.onerror = () => reject(request.error);
             } catch (error) {
                 console.error('❌ Error in getAllSessions:', error);
-                reject(error);
+                resolve([]); // Return empty array instead of rejecting
             }
         });
     }

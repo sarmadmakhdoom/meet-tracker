@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Meeting Extension Debug</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        .section { margin: 20px 0; padding: 10px; border: 1px solid #ccc; }
+        .meeting { margin: 10px 0; padding: 10px; background: #f5f5f5; }
+        .session { margin: 10px 0; padding: 10px; background: #e5f5e5; }
+        button { padding: 10px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Meeting Extension Storage Debug</h1>
+    
+    <button onclick="checkStorage()">Check Storage</button>
+    <button onclick="clearAllData()">Clear All Data</button>
+    
+    <div id="output"></div>
+
+    <script src="storage-manager.js"></script>
+    <script>
+        let storageManager = null;
+
+        async function initStorage() {
+            try {
+                storageManager = new MeetingStorageManager();
+                await storageManager.init();
+                console.log('✅ Storage manager initialized');
+                return true;
+            } catch (error) {
+                console.error('❌ Failed to initialize storage:', error);
+                document.getElementById('output').innerHTML = `<div style="color: red;">Failed to initialize storage: ${error.message}</div>`;
+                return false;
+            }
+        }
+
+        async function checkStorage() {
+            if (!storageManager) {
+                const initialized = await initStorage();
+                if (!initialized) return;
+            }
+
+            const output = document.getElementById('output');
+            output.innerHTML = '<div>Checking storage...</div>';
+
+            try {
+                // Get old meetings (backward compatibility)
+                const meetings = await storageManager.getMeetings();
+                console.log('📋 Old meetings:', meetings);
+
+                // Get new sessions
+                const sessions = await storageManager.getAllSessions();
+                console.log('📋 Sessions:', sessions);
+
+                // Get participants
+                const participants = await storageManager.getAllParticipants();
+                console.log('👥 Participants:', participants);
+
+                let html = '<div class="section"><h2>Legacy Meetings (' + meetings.length + ')</h2>';
+                
+                if (meetings.length === 0) {
+                    html += '<div style="color: #666;">No legacy meetings found</div>';
+                } else {
+                    meetings.sort((a, b) => b.startTime - a.startTime);
+                    meetings.forEach(meeting => {
+                        const startTime = new Date(meeting.startTime).toLocaleString();
+                        const endTime = meeting.endTime ? new Date(meeting.endTime).toLocaleString() : 'Not ended';
+                        const duration = meeting.endTime ? Math.round((meeting.endTime - meeting.startTime) / 60000) + ' min' : 'Ongoing';
+                        
+                        html += `<div class="meeting">
+                            <strong>${meeting.title || meeting.id}</strong><br>
+                            Started: ${startTime}<br>
+                            Ended: ${endTime}<br>
+                            Duration: ${duration}<br>
+                            Participants: ${meeting.participants ? meeting.participants.length : 0}<br>
+                            ID: ${meeting.id}
+                        </div>`;
+                    });
+                }
+                html += '</div>';
+
+                html += '<div class="section"><h2>Sessions (' + sessions.length + ')</h2>';
+                
+                if (sessions.length === 0) {
+                    html += '<div style="color: #666;">No sessions found</div>';
+                } else {
+                    sessions.sort((a, b) => b.startTime - a.startTime);
+                    sessions.forEach(session => {
+                        const startTime = new Date(session.startTime).toLocaleString();
+                        const endTime = session.endTime ? new Date(session.endTime).toLocaleString() : 'Not ended';
+                        const duration = session.endTime ? Math.round((session.endTime - session.startTime) / 60000) + ' min' : 'Ongoing';
+                        
+                        html += `<div class="session">
+                            <strong>${session.title || session.meetingId}</strong><br>
+                            Session ID: ${session.sessionId}<br>
+                            Meeting ID: ${session.meetingId}<br>
+                            Started: ${startTime}<br>
+                            Ended: ${endTime}<br>
+                            Duration: ${duration}<br>
+                            Participants: ${session.participants ? session.participants.length : 0}<br>
+                            Data Source: ${session.dataSource || 'unknown'}
+                        </div>`;
+                    });
+                }
+                html += '</div>';
+
+                html += '<div class="section"><h2>Participants (' + participants.length + ')</h2>';
+                participants.forEach(participant => {
+                    html += `<div style="margin: 5px 0;">
+                        <strong>${participant.name}</strong>: ${participant.meetingCount} meetings, ${Math.round(participant.totalTime / 60000)} minutes total
+                    </div>`;
+                });
+                html += '</div>';
+
+                output.innerHTML = html;
+
+            } catch (error) {
+                console.error('❌ Error checking storage:', error);
+                output.innerHTML = `<div style="color: red;">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function clearAllData() {
+            if (!storageManager) {
+                const initialized = await initStorage();
+                if (!initialized) return;
+            }
+
+            if (confirm('Are you sure you want to clear all meeting data?')) {
+                try {
+                    await storageManager.clearAllData();
+                    document.getElementById('output').innerHTML = '<div style="color: green;">All data cleared successfully</div>';
+                } catch (error) {
+                    console.error('❌ Error clearing data:', error);
+                    document.getElementById('output').innerHTML = `<div style="color: red;">Error clearing data: ${error.message}</div>`;
+                }
+            }
+        }
+
+        // Auto-check storage on load
+        window.addEventListener('load', () => {
+            setTimeout(checkStorage, 500);
+        });
+    </script>
+</body>
+</html>
