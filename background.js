@@ -308,12 +308,22 @@ async function handleParticipantsUpdate(data, sender) {
     const currentSessionId = meetingToSessionMap[meetingId];
     let activeSession = currentSessionId ? activeSessions[currentSessionId] : null;
     
-    // If no session in memory, check if we have a recent ongoing session in storage
+    // ENHANCED: If no session in memory, aggressively check storage for ongoing sessions
     if (!activeSession) {
         console.log(`🔍 No active session in memory for meeting ${meetingId}, checking storage and creating/continuing session`);
         activeSession = await findOrCreateSession(meetingId, meetingTitle, participants, sender, networkParticipants);
+        
+        // Log session recovery for debugging
+        if (activeSession && activeSession.continued) {
+            console.log(`🔄 RECOVERED SESSION: Found and restored session ${activeSession.sessionId} for meeting ${meetingId}`);
+            console.log(`   Original start time: ${new Date(activeSession.startTime).toISOString()}`);
+            console.log(`   Gap since last update: ${activeSession.lastUpdated ? Math.round((Date.now() - activeSession.lastUpdated) / 1000) : 'unknown'} seconds`);
+        }
     } else {
         console.log(`🗋 Found existing session in memory: ${activeSession.sessionId}`);
+        
+        // Update last activity timestamp to prevent session cleanup
+        activeSession.lastUpdated = Date.now();
     }
     
     console.log(`📝 Using session ${activeSession.sessionId} for meeting ${meetingId}`);
@@ -326,7 +336,8 @@ async function handleParticipantsUpdate(data, sender) {
         startTime: new Date(activeSession.startTime).toISOString(),
         isActive: activeSession.isActive,
         continued: activeSession.continued,
-        fallback: activeSession.fallback
+        fallback: activeSession.fallback,
+        lastUpdated: activeSession.lastUpdated ? new Date(activeSession.lastUpdated).toISOString() : 'never'
     });
     
     // Always update existing session (but don't recreate it!)
@@ -334,6 +345,7 @@ async function handleParticipantsUpdate(data, sender) {
         // Update existing session data
         activeSession.participants = participants;
         activeSession.lastUpdated = Date.now();
+        activeSession.url = sender.tab?.url || activeSession.url; // Keep URL updated
         
         // Update title if provided
         if (meetingTitle && meetingTitle !== activeSession.title) {
@@ -615,24 +627,30 @@ async function ensureSessionDataLoaded() {
         
         console.log(`🔍 Found ${ongoingSessions.length} ongoing sessions in storage`);
         
-        // Restore ongoing sessions to memory
+        // Restore ongoing sessions to memory with enhanced recovery logic
         for (const session of ongoingSessions) {
-            // Check if session is recent (within last 4 hours)
-            const fourHoursAgo = Date.now() - (4 * 60 * 60 * 1000);
-            if (session.startTime > fourHoursAgo) {
-                console.log(`🔄 Restoring session: ${session.sessionId} for meeting ${session.meetingId}`);
+            // Check if session is recent (within last 8 hours, extended from 4)
+            const eightHoursAgo = Date.now() - (8 * 60 * 60 * 1000);
+            if (session.startTime > eightHoursAgo) {
+                const sessionAge = Math.round((Date.now() - session.startTime) / (60 * 60 * 1000));
+                console.log(`🔄 Restoring session: ${session.sessionId} for meeting ${session.meetingId} (${sessionAge}h old)`);
                 
-                // Restore to memory
+                // Restore to memory with recovery markers
                 activeSessions[session.sessionId] = {
                     ...session,
                     isActive: true,
                     minuteLogs: session.minuteLogs || [],
-                    lastUpdated: Date.now()
+                    lastUpdated: Date.now(),
+                    restoredFromStorage: true,
+                    restoredAt: Date.now()
                 };
                 meetingToSessionMap[session.meetingId] = session.sessionId;
+                
+                console.log(`✅ Session restored: duration ${Math.round((Date.now() - session.startTime) / 60000)}m, last updated: ${session.lastUpdated ? new Date(session.lastUpdated).toISOString() : 'never'}`);
             } else {
                 // Session is too old, mark as ended
-                console.log(`⏰ Auto-ending stale session: ${session.sessionId} (${Math.round((Date.now() - session.startTime) / (60 * 60 * 1000))} hours old)`);
+                const sessionAge = Math.round((Date.now() - session.startTime) / (60 * 60 * 1000));
+                console.log(`⏰ Auto-ending stale session: ${session.sessionId} (${sessionAge} hours old)`);
                 await endActiveSession(session.meetingId, 'stale_session_cleanup');
             }
         }
@@ -657,27 +675,33 @@ async function findOrCreateSession(meetingId, meetingTitle, participants, sender
             
             if (ongoingSession) {
                 console.log(`🔄 Found ongoing session in storage: ${ongoingSession.sessionId}`);
+                console.log(`   Session was last updated: ${ongoingSession.lastUpdated ? new Date(ongoingSession.lastUpdated).toISOString() : 'never'}`);
                 
-                // Restore to memory
+                // Restore to memory with session recovery markers
                 activeSessions[ongoingSession.sessionId] = {
                     ...ongoingSession,
                     isActive: true,
                     participants: participants, // Update with current participants
                     lastUpdated: Date.now(),
-                    minuteLogs: ongoingSession.minuteLogs || []
+                    minuteLogs: ongoingSession.minuteLogs || [],
+                    continued: true, // Mark as continued session
+                    recovered: true, // Mark as recovered from storage
+                    recoveredAt: Date.now()
                 };
                 meetingToSessionMap[meetingId] = ongoingSession.sessionId;
                 
+                console.log(`✅ Session ${ongoingSession.sessionId} restored to memory (${Math.round((Date.now() - ongoingSession.startTime) / 60000)}m total duration)`);
                 return activeSessions[ongoingSession.sessionId];
             }
             
-            // Check for recently ended sessions (within 10 minutes)
+            // EXTENDED RECOVERY: Check for recently ended sessions (within 15 minutes instead of 10)
             const recentSession = recentSessions
-                .filter(session => session.endTime && (Date.now() - session.endTime) < (10 * 60 * 1000))
+                .filter(session => session.endTime && (Date.now() - session.endTime) < (15 * 60 * 1000))
                 .sort((a, b) => b.endTime - a.endTime)[0];
             
             if (recentSession) {
-                console.log(`🔄 Continuing recent session: ${recentSession.sessionId} (ended ${Math.round((Date.now() - recentSession.endTime) / 60000)} minutes ago)`);
+                const gapMinutes = Math.round((Date.now() - recentSession.endTime) / 60000);
+                console.log(`🔄 Continuing recent session: ${recentSession.sessionId} (ended ${gapMinutes} minutes ago)`);
                 
                 // Create a new session that continues from the recent one
                 const sessionId = storage.generateSessionId();
@@ -693,12 +717,15 @@ async function findOrCreateSession(meetingId, meetingTitle, participants, sender
                     url: sender.tab?.url,
                     dataSource: networkParticipants > 0 ? 'network' : 'dom',
                     continued: true,
-                    originalSessionId: recentSession.sessionId
+                    originalSessionId: recentSession.sessionId,
+                    gapDuration: Date.now() - recentSession.endTime, // Track gap duration
+                    lastUpdated: Date.now()
                 };
                 
                 activeSessions[sessionId] = activeSession;
                 meetingToSessionMap[meetingId] = sessionId;
                 
+                console.log(`✅ Session continued from ${recentSession.sessionId} with ${gapMinutes}m gap (total: ${Math.round((Date.now() - recentSession.startTime) / 60000)}m)`);
                 return activeSession;
             }
         }
@@ -719,7 +746,8 @@ async function findOrCreateSession(meetingId, meetingTitle, participants, sender
             isActive: true,
             minuteLogs: [],
             url: sender.tab?.url,
-            dataSource: networkParticipants > 0 ? 'network' : 'dom'
+            dataSource: networkParticipants > 0 ? 'network' : 'dom',
+            lastUpdated: Date.now()
         };
         
         activeSessions[sessionId] = activeSession;
@@ -743,7 +771,8 @@ async function findOrCreateSession(meetingId, meetingTitle, participants, sender
             minuteLogs: [],
             url: sender.tab?.url,
             dataSource: networkParticipants > 0 ? 'network' : 'dom',
-            fallback: true
+            fallback: true,
+            lastUpdated: Date.now()
         };
         
         activeSessions[sessionId] = activeSession;

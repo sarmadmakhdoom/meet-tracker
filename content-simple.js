@@ -321,6 +321,10 @@ class SimpleMeetTracker {
       // The background will create/continue sessions based on participant updates
       // this.sendMeetingStateToBackground('started'); // REMOVED
       
+      // CRITICAL: Immediately request session start time to prevent duration resets
+      console.log(`[${new Date().toISOString()}] 🔄 Meeting active - immediately requesting session timing from background`);
+      this.requestSessionStartTimeFromBackground();
+      
       // Start continuous minute tracking (but duration calculation will be based on background session)
       console.log(`[${new Date().toISOString()}] ⏱️ Starting minute-by-minute tracking (duration from background session)`);
       this.startMinuteTracking();
@@ -889,7 +893,11 @@ class SimpleMeetTracker {
       'Connection ended',
       'Disconnected from meeting',
       'Left the call',
-      'Call disconnected'
+      'Call disconnected',
+      'You are not in this call',
+      'Meeting has been ended',
+      'This call has ended',
+      'Session has expired'
     ];
     
     for (let text of strongEndTexts) {
@@ -902,10 +910,11 @@ class SimpleMeetTracker {
     // LEVEL 2: Explicit post-meeting buttons (strong indicators) - EXPANDED
     // Note: querySelector does NOT support :contains, so do text-based detection
     const rejoinButton = document.querySelector('button[aria-label*="Rejoin"], button[aria-label*="Join again"]') ||
-      Array.from(document.querySelectorAll('button')).find(b => /\b(rejoin|join again)\b/i.test(b.textContent || '')) || null;
-    const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"], a[href="/"], a[href*="meet.google.com"]');
+      Array.from(document.querySelectorAll('button')).find(b => /\b(rejoin|join again|return to call)\b/i.test(b.textContent || '')) || null;
+    const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"], a[href="/"], a[href*="meet.google.com"]') ||
+      Array.from(document.querySelectorAll('a')).find(a => /\b(return to home|back to meet|home screen)\b/i.test(a.textContent || '')) || null;
     const newMeetingButton = document.querySelector('button[aria-label*="New meeting"]') ||
-      Array.from(document.querySelectorAll('button')).find(b => /\bnew\s+meeting\b/i.test(b.textContent || '')) || null;
+      Array.from(document.querySelectorAll('button')).find(b => /\bnew\s+(meeting|call)\b/i.test(b.textContent || '')) || null;
     
     if (rejoinButton || returnHomeButton || newMeetingButton) {
       console.log(`[SimpleMeetTracker] ✅ STRONG end evidence: Post-meeting buttons found (Rejoin: ${!!rejoinButton}, Home: ${!!returnHomeButton}, New: ${!!newMeetingButton})`);
@@ -915,7 +924,8 @@ class SimpleMeetTracker {
     // LEVEL 3: URL patterns that indicate meeting ended - EXPANDED
     const currentUrl = window.location.href;
     if (currentUrl.includes('/landing/') || currentUrl.includes('/ended/') || currentUrl.includes('/thankyou/') || 
-        currentUrl.includes('/goodbye/') || currentUrl.includes('/complete/') || currentUrl === 'https://meet.google.com/') {
+        currentUrl.includes('/goodbye/') || currentUrl.includes('/complete/') || currentUrl === 'https://meet.google.com/' ||
+        currentUrl.includes('/feedback') || currentUrl.includes('/survey') || currentUrl.includes('/rating')) {
       console.log(`[SimpleMeetTracker] ✅ STRONG end evidence: On post-meeting URL: ${currentUrl}`);
       return true;
     }
@@ -937,14 +947,33 @@ class SimpleMeetTracker {
       }
     }
     
-    // LEVEL 5: Check if we can't find ANY meeting controls AND no participants for shorter period
+    // LEVEL 5: Check DOM structure changes that indicate meeting ended
+    // Look for complete absence of meeting-specific elements
+    const participantPanels = document.querySelectorAll('[data-participant-id]');
+    const videoElements = document.querySelectorAll('video');
+    const meetingControls = document.querySelectorAll('[data-is-muted], [data-is-video-on], [aria-label*="microphone"], [aria-label*="camera"]');
+    const meetingAreas = document.querySelectorAll('[data-allocation-index], [jsname="A5il2e"]');
+    
+    const hasMeetingDOMElements = participantPanels.length > 0 || videoElements.length > 0 || 
+                                meetingControls.length > 0 || meetingAreas.length > 0;
+    
+    if (!hasMeetingDOMElements && isMeetingUrlPattern) {
+      // Additional check: ensure we're not just loading
+      const loadingElements = document.querySelectorAll('[aria-label*="Loading"], .loading, [class*="loading"], [class*="spinner"]');
+      if (loadingElements.length === 0) {
+        console.log(`[SimpleMeetTracker] ✅ STRONG end evidence: No meeting DOM elements found on meeting URL`);
+        return true;
+      }
+    }
+    
+    // LEVEL 6: Check for inactive period with no meeting elements
     const hasMeetingControls = this.hasMeetingControls();
     const hasParticipants = this.participants.size > 0;
     const hasRetainedParticipants = this.getRetainedParticipants().size > 0;
     const now = Date.now();
     
     // Track when we last had clear meeting activity
-    if (hasMeetingControls || hasParticipants) {
+    if (hasMeetingControls || hasParticipants || hasMeetingDOMElements) {
       this.lastClearMeetingActivity = now;
     }
     
@@ -953,12 +982,13 @@ class SimpleMeetTracker {
     const timeSinceLastActivity = this.lastClearMeetingActivity ? (now - this.lastClearMeetingActivity) : 0;
     const inactiveThreshold = 1 * 60 * 1000; // 1 minute (reduced from 2)
     
-    if (!hasMeetingControls && !hasParticipants && !hasRetainedParticipants && timeSinceLastActivity > inactiveThreshold) {
+    if (!hasMeetingControls && !hasParticipants && !hasRetainedParticipants && 
+        !hasMeetingDOMElements && timeSinceLastActivity > inactiveThreshold) {
       console.log(`[SimpleMeetTracker] ✅ MODERATE end evidence: No meeting activity for ${Math.round(timeSinceLastActivity / 60000)} minutes`);
       return true;
     }
     
-    // LEVEL 6: Additional fallback checks for common meeting end scenarios
+    // LEVEL 7: Additional fallback checks for common meeting end scenarios
     // Check if page title changed to indicate meeting ended
     const pageTitle = document.title || '';
     if (pageTitle.includes('Meet') && !pageTitle.includes('Google Meet') && pageTitle.toLowerCase().includes('end')) {
@@ -977,7 +1007,7 @@ class SimpleMeetTracker {
     }
     
     // No clear evidence of meeting end
-    console.log(`[SimpleMeetTracker] ❌ No clear end evidence - meeting should remain active (controls: ${hasMeetingControls}, participants: ${hasParticipants}, retained: ${hasRetainedParticipants}, inactive: ${Math.round(timeSinceLastActivity / 60000)}m, leaveButton: ${!!leaveCallButton})`);
+    console.log(`[SimpleMeetTracker] ❌ No clear end evidence - meeting should remain active (controls: ${hasMeetingControls}, participants: ${hasParticipants}, retained: ${hasRetainedParticipants}, DOM: ${hasMeetingDOMElements}, inactive: ${Math.round(timeSinceLastActivity / 60000)}m, leaveButton: ${!!leaveCallButton})`);
     return false;
   }
   
