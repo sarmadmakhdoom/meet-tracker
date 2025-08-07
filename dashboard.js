@@ -1033,6 +1033,7 @@ function updateMeetingsTable() {
                 <td>${efficiency}</td>
                 <td>
                     <button class="view-details" data-meeting-id="${m.id}">Details</button>
+                    <button class="delete-meeting" data-meeting-id="${m.id}" title="Delete this meeting">🗑️</button>
                 </td>
             </tr>
         `;
@@ -1043,6 +1044,14 @@ function updateMeetingsTable() {
         button.addEventListener('click', (e) => {
             const meetingId = e.target.getAttribute('data-meeting-id');
             showMeetingDetails(meetingId);
+        });
+    });
+    
+    // Add event listeners for delete buttons (CSP-compliant)
+    tbody.querySelectorAll('.delete-meeting').forEach(button => {
+        button.addEventListener('click', (e) => {
+            const meetingId = e.target.getAttribute('data-meeting-id');
+            deleteMeetingEntry(meetingId);
         });
     });
 }
@@ -1449,6 +1458,92 @@ async function cleanupZombieMeetings() {
             cleanupBtn.textContent = originalText;
             cleanupBtn.disabled = false;
         }, 2000);
+    }
+}
+
+// Delete individual meeting entry
+async function deleteMeetingEntry(meetingId) {
+    // Find the meeting to get its details for confirmation
+    const meeting = allMeetings.find(m => m.id === meetingId);
+    if (!meeting) {
+        alert('Meeting not found!');
+        return;
+    }
+    
+    const meetingTitle = meeting.title || `Meeting ${meetingId}`;
+    const meetingDate = new Date(meeting.startTime).toLocaleString();
+    
+    // Confirm deletion
+    const confirmed = confirm(
+        `🗑️ Delete Meeting?\n\n` +
+        `Title: ${meetingTitle}\n` +
+        `Date: ${meetingDate}\n` +
+        `Participants: ${meeting.participants.length}\n\n` +
+        `This action cannot be undone. Continue?`
+    );
+    
+    if (!confirmed) {
+        return;
+    }
+    
+    try {
+        // Send delete request to background script
+        const response = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ 
+                action: 'deleteMeeting', 
+                meetingId: meetingId 
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (response.success) {
+            // Remove from local arrays
+            allMeetings = allMeetings.filter(m => m.id !== meetingId);
+            filteredMeetings = filteredMeetings.filter(m => m.id !== meetingId);
+            
+            // Update the dashboard
+            updateDashboard();
+            
+            // Show success message
+            console.log(`✅ Successfully deleted meeting: ${meetingId}`);
+            
+            // Optional: Show a temporary success notification
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #34a853;
+                color: white;
+                padding: 12px 20px;
+                border-radius: 8px;
+                z-index: 10000;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                font-size: 14px;
+                font-weight: 500;
+            `;
+            notification.textContent = `✅ Deleted: ${meetingTitle}`;
+            document.body.appendChild(notification);
+            
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+            
+        } else {
+            alert(`Failed to delete meeting: ${response.message || 'Unknown error'}`);
+        }
+        
+    } catch (error) {
+        console.error('Error deleting meeting:', error);
+        alert(`❌ Error deleting meeting: ${error.message}`);
     }
 }
 

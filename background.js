@@ -1,5 +1,8 @@
 // Network-enhanced background service worker for Google Meet Tracker
 
+// Import storage manager
+importScripts('storage-manager.js');
+
 let currentMeetingState = {
     state: 'none',
     participants: [],
@@ -7,22 +10,33 @@ let currentMeetingState = {
     networkParticipants: 0
 };
 
+// Initialize storage manager
+let storageManager = null;
+
 console.log('🌐 Network-enhanced Google Meet Tracker background loaded');
 
 // Initialize extension
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
     console.log('Google Meet Tracker (Network Enhanced) installed');
+    
+    // Initialize IndexedDB storage
+    await initializeStorageManager();
     
     // Setup declarative net request rules for monitoring
     setupNetworkMonitoring();
-    
-    // Initialize storage
-    chrome.storage.local.get(['meetings'], (result) => {
-        if (!result.meetings) {
-            chrome.storage.local.set({ meetings: [] });
-        }
-    });
 });
+
+// Initialize storage manager
+async function initializeStorageManager() {
+    try {
+        storageManager = new MeetingStorageManager();
+        await storageManager.init();
+        console.log('✅ IndexedDB storage manager initialized');
+    } catch (error) {
+        console.error('❌ Failed to initialize storage manager:', error);
+        // Fallback: we'll handle this in the individual functions
+    }
+}
 
 // Network monitoring is handled by content script injection
 async function setupNetworkMonitoring() {
@@ -124,6 +138,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 case 'meetingEndedByNavigation':
                     await handleMeetingEndedByNavigation(request.meetingId, request.reason, sender);
                     sendResponse({ success: true });
+                    break;
+                    
+                case 'deleteMeeting':
+                    const deleteResult = await deleteMeeting(request.meetingId);
+                    sendResponse(deleteResult);
                     break;
                     
                 default:
@@ -421,63 +440,131 @@ function updateIcon(state, participants, hasNetworkData = false) {
     console.log(`✅ Icon updated: ${title}`);
 }
 
-// Storage functions
+// Storage functions using IndexedDB
+async function ensureStorageManager() {
+    if (!storageManager) {
+        await initializeStorageManager();
+    }
+    return storageManager;
+}
+
 async function getMeetings() {
-    return new Promise((resolve) => {
-        chrome.storage.local.get(['meetings'], (result) => {
-            resolve(result.meetings || []);
-        });
-    });
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, returning empty array');
+            return [];
+        }
+        return await storage.getMeetings();
+    } catch (error) {
+        console.error('❌ Error getting meetings from IndexedDB:', error);
+        return [];
+    }
 }
 
 async function saveMeetings(meetings) {
-    return new Promise((resolve) => {
-        chrome.storage.local.set({ meetings }, () => {
-            resolve();
-        });
-    });
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, cannot save meetings');
+            return;
+        }
+        
+        // IndexedDB storage saves meetings individually, not as an array
+        // Save each meeting individually
+        for (const meeting of meetings) {
+            await storage.saveMeeting(meeting);
+        }
+        console.log(`💾 Saved ${meetings.length} meetings to IndexedDB`);
+    } catch (error) {
+        console.error('❌ Error saving meetings to IndexedDB:', error);
+    }
 }
 
 async function saveMeeting(meeting) {
-    const meetings = await getMeetings();
-    const existingIndex = meetings.findIndex(m => m.id === meeting.id);
-    
-    if (existingIndex >= 0) {
-        meetings[existingIndex] = meeting;
-    } else {
-        meetings.push(meeting);
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, cannot save meeting');
+            return;
+        }
+        
+        await storage.saveMeeting(meeting);
+        console.log(`💾 Meeting saved to IndexedDB: ${meeting.id}`);
+    } catch (error) {
+        console.error('❌ Error saving meeting to IndexedDB:', error);
     }
-    
-    await saveMeetings(meetings);
-    console.log('💾 Meeting saved to storage');
 }
 
 async function saveMeetingUpdate(meeting) {
-    const meetings = await getMeetings();
-    const existingIndex = meetings.findIndex(m => m.id === meeting.id);
-    
-    if (existingIndex >= 0) {
-        meetings[existingIndex] = meeting;
-    } else {
-        meetings.push(meeting);
-    }
-    
-    await saveMeetings(meetings);
+    // Same as saveMeeting for IndexedDB (it handles updates automatically)
+    await saveMeeting(meeting);
 }
 
 async function clearAllData() {
-    return new Promise((resolve) => {
-        chrome.storage.local.set({ meetings: [] }, () => {
-            currentMeetingState = {
-                state: 'none',
-                participants: [],
-                currentMeeting: null,
-                networkParticipants: 0
-            };
-            console.log('🗑️ All meeting data cleared');
-            resolve({ success: true });
-        });
-    });
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, cannot clear data');
+            return { success: false, message: 'Storage not available' };
+        }
+        
+        await storage.clearAllData();
+        
+        currentMeetingState = {
+            state: 'none',
+            participants: [],
+            currentMeeting: null,
+            networkParticipants: 0
+        };
+        
+        console.log('🗑️ All meeting data cleared from IndexedDB');
+        return { success: true };
+    } catch (error) {
+        console.error('❌ Error clearing data from IndexedDB:', error);
+        return { success: false, message: error.message };
+    }
+}
+
+// Delete individual meeting by ID
+async function deleteMeeting(meetingId) {
+    console.log(`🗑️ Deleting meeting: ${meetingId}`);
+    
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, cannot delete meeting');
+            return { success: false, message: 'Storage not available' };
+        }
+        
+        // First, get the meeting to return its details
+        const meeting = await storage.getMeeting(meetingId);
+        if (!meeting) {
+            console.warn(`⚠️ Meeting ${meetingId} not found`);
+            return { success: false, message: 'Meeting not found' };
+        }
+        
+        console.log(`🔍 Found meeting to delete: "${meeting.title}" started at ${new Date(meeting.startTime).toLocaleString()}`);
+        
+        // Delete the meeting using IndexedDB storage manager
+        await storage.deleteMeeting(meetingId);
+        
+        console.log(`✅ Successfully deleted meeting: ${meetingId}`);
+        
+        return { 
+            success: true, 
+            message: `Successfully deleted meeting "${meeting.title || meetingId}"`,
+            deletedMeeting: {
+                id: meeting.id,
+                title: meeting.title,
+                startTime: meeting.startTime
+            }
+        };
+        
+    } catch (error) {
+        console.error('❌ Error deleting meeting:', error);
+        return { success: false, message: error.message };
+    }
 }
 
 // Force end current meeting (zombie cleanup)

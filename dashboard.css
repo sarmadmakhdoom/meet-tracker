@@ -691,11 +691,33 @@ button {
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.2s ease;
+    margin-right: 0.5rem;
 }
 
 .view-details:hover {
     background: #1557b0;
     transform: translateY(-1px);
+}
+
+.delete-meeting {
+    padding: 0.5rem;
+    font-size: 1rem;
+    background: #ea4335;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.delete-meeting:hover {
+    background: #d33b2c;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(234, 67, 53, 0.3);
 }
 
 /* Modal */
