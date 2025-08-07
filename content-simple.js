@@ -148,19 +148,24 @@ class SimpleMeetTracker {
     const participantElements = document.querySelectorAll('*[data-participant-id]');
     const now = Date.now();
     
+    console.log(`[${new Date().toISOString()}] 🔍 Starting participant scan on ${window.location.href}`);
+    console.log(`[${new Date().toISOString()}] 🎯 Found ${participantElements.length} participant elements with data-participant-id`);
+    
     if (participantElements.length === 0) {
-      console.log('[SimpleMeetTracker] ⚠️ No participant elements found');
+      console.log(`[${new Date().toISOString()}] ⚠️ No participant elements found`);
       
       // Check if we're in a meeting but participants panel is closed
       const meetingControls = document.querySelectorAll('[data-is-muted], [data-is-video-on]');
+      console.log(`[${new Date().toISOString()}] 🎮 Found ${meetingControls.length} meeting control elements`);
+      
       if (meetingControls.length > 0) {
-        console.log('[SimpleMeetTracker] ✅ In meeting but participants panel may be closed - using retained participants');
+        console.log(`[${new Date().toISOString()}] ✅ In meeting but participants panel may be closed - using retained participants`);
         this.lastParticipantVisibility = now;
         
         // Use retained participants from memory
         const retainedParticipants = this.getRetainedParticipants();
         if (retainedParticipants.size > 0) {
-          console.log(`[SimpleMeetTracker] 🧠 Using ${retainedParticipants.size} retained participants from memory`);
+          console.log(`[${new Date().toISOString()}] 🧠 Using ${retainedParticipants.size} retained participants from memory: ${Array.from(retainedParticipants.values()).map(p => p.name).join(', ')}`);
           this.participants = retainedParticipants;
           
           // Send retained participants to background
@@ -171,20 +176,21 @@ class SimpleMeetTracker {
         // No meeting controls - check if we should use retained participants
         const retainedParticipants = this.getRetainedParticipants();
         if (retainedParticipants.size > 0 && this.meetingState.isActive) {
-          console.log(`[SimpleMeetTracker] 🧠 No controls but meeting active - using ${retainedParticipants.size} retained participants`);
+          console.log(`[${new Date().toISOString()}] 🧠 No controls but meeting active - using ${retainedParticipants.size} retained participants: ${Array.from(retainedParticipants.values()).map(p => p.name).join(', ')}`);
           this.participants = retainedParticipants;
           this.sendUpdateToBackground();
           return;
         }
         
         // No participants and no controls - might be zombie meeting
+        console.log(`[${new Date().toISOString()}] 🧟 Checking for zombie meeting (no participants, no controls)`);
         this.checkForZombieMeeting();
       }
       return;
     }
-
-    console.log(`[SimpleMeetTracker] 🔍 Found ${participantElements.length} participant elements`);
-
+    
+    console.log(`[${new Date().toISOString()}] 🔍 Processing ${participantElements.length} participant elements...`);
+    
     let newParticipants = 0;
     const currentParticipants = new Map();
     const validParticipants = new Map();
@@ -290,12 +296,19 @@ class SimpleMeetTracker {
         resumed: false // This doesn't matter anymore - background handles sessions
       };
       
-      console.log(`[SimpleMeetTracker] 🚀 Meeting detected: ${this.meetingState.meetingTitle} at ${new Date(startTime).toLocaleTimeString()}`);
+      console.log(`[${new Date().toISOString()}] 🚀 MEETING STARTED:`, {
+        meetingId: this.meetingState.meetingId,
+        meetingTitle: this.meetingState.meetingTitle,
+        startTime: new Date(startTime).toISOString(),
+        url: window.location.href,
+        participantCount: this.participants.size
+      });
       
       // Send meeting start to background - background will handle session logic
       this.sendMeetingStateToBackground('started');
       
       // Start continuous minute tracking
+      console.log(`[${new Date().toISOString()}] ⏱️ Starting minute-by-minute tracking for meeting`);
       this.startMinuteTracking();
       
     } else if (!isActive && this.meetingState.isActive) {
@@ -318,12 +331,21 @@ class SimpleMeetTracker {
       const sessionDuration = this.meetingState.resumedAt ? 
         endTime - this.meetingState.resumedAt : totalDuration;
       
-      console.log(`[SimpleMeetTracker] 🏁 Meeting ended - Total: ${Math.round(totalDuration / 60000)}m, Session: ${Math.round(sessionDuration / 60000)}m, Final participants: ${this.participants.size}`);
+      console.log(`[${new Date().toISOString()}] 🏁 MEETING ENDED:`, {
+        meetingId: this.meetingState.meetingId,
+        meetingTitle: this.meetingState.meetingTitle,
+        totalDurationMinutes: Math.round(totalDuration / 60000),
+        sessionDurationMinutes: Math.round(sessionDuration / 60000),
+        finalParticipantCount: this.participants.size,
+        finalParticipants: Array.from(this.participants.values()).map(p => p.name),
+        endTime: new Date(endTime).toISOString()
+      });
       
       // Send meeting end to background with final meeting data (including retained participants)
       this.sendMeetingStateToBackground('ended');
       
       // Stop minute tracking
+      console.log(`[${new Date().toISOString()}] ⏹️ Stopping minute tracking`);
       this.stopMinuteTracking();
       
       // Clear participants since meeting ended
@@ -478,9 +500,17 @@ class SimpleMeetTracker {
       participants: Array.from(this.participants.values())
     };
 
+    console.log(`[${new Date().toISOString()}] 📤 Sending participant update to background:`, {
+      meetingId: data.meetingId,
+      meetingTitle: data.meetingTitle,
+      participantCount: data.participants.length,
+      participantNames: data.participants.map(p => p.name),
+      isActive: this.meetingState.isActive
+    });
+
     // Check if chrome runtime is available
     if (!chrome?.runtime?.id) {
-      console.log('[SimpleMeetTracker] Extension context invalidated, skipping background update');
+      console.log(`[${new Date().toISOString()}] ❌ Extension context invalidated, skipping background update`);
       return;
     }
 
@@ -490,20 +520,23 @@ class SimpleMeetTracker {
         data: data
       }, (response) => {
         if (chrome.runtime.lastError) {
-          console.log('[SimpleMeetTracker] Background communication error:', chrome.runtime.lastError.message);
+          console.log(`[${new Date().toISOString()}] ❌ Background communication error:`, chrome.runtime.lastError.message);
         } else {
-          console.log(`[SimpleMeetTracker] Successfully sent ${data.participants.length} participants to background`);
+          console.log(`[${new Date().toISOString()}] ✅ Successfully sent ${data.participants.length} participants to background:`, response);
+          if (response?.sessionId) {
+            console.log(`[${new Date().toISOString()}] 🆔 Session ID: ${response.sessionId}`);
+          }
         }
       });
     } catch (error) {
-      console.log('[SimpleMeetTracker] Failed to send to background:', error.message);
+      console.log(`[${new Date().toISOString()}] ❌ Failed to send to background:`, error.message);
     }
   }
 
   sendMeetingStateToBackground(eventType) {
     // Check if chrome runtime is available
     if (!chrome?.runtime?.id) {
-      console.log('[SimpleMeetTracker] Extension context invalidated, skipping meeting state update');
+      console.log(`[${new Date().toISOString()}] ❌ Extension context invalidated, skipping meeting state update`);
       return;
     }
 
@@ -516,6 +549,15 @@ class SimpleMeetTracker {
       participants: Array.from(this.participants.values())
     };
 
+    console.log(`[${new Date().toISOString()}] 🚀 Sending meeting ${eventType} to background:`, {
+      meetingId: meetingData.id,
+      meetingTitle: meetingData.title,
+      startTime: meetingData.startTime ? new Date(meetingData.startTime).toISOString() : null,
+      endTime: meetingData.endTime ? new Date(meetingData.endTime).toISOString() : null,
+      participantCount: meetingData.participants.length,
+      participantNames: meetingData.participants.map(p => p.name)
+    });
+
     try {
       if (eventType === 'started') {
         chrome.runtime.sendMessage({
@@ -523,9 +565,9 @@ class SimpleMeetTracker {
           meeting: meetingData
         }, (response) => {
           if (chrome.runtime.lastError) {
-            console.log('[SimpleMeetTracker] Error sending meeting start:', chrome.runtime.lastError.message);
+            console.log(`[${new Date().toISOString()}] ❌ Error sending meeting start:`, chrome.runtime.lastError.message);
           } else {
-            console.log('[SimpleMeetTracker] Meeting start sent to background');
+            console.log(`[${new Date().toISOString()}] ✅ Meeting start sent to background:`, response);
           }
         });
       } else if (eventType === 'ended') {
@@ -534,14 +576,14 @@ class SimpleMeetTracker {
           meeting: meetingData
         }, (response) => {
           if (chrome.runtime.lastError) {
-            console.log('[SimpleMeetTracker] Error sending meeting end:', chrome.runtime.lastError.message);
+            console.log(`[${new Date().toISOString()}] ❌ Error sending meeting end:`, chrome.runtime.lastError.message);
           } else {
-            console.log('[SimpleMeetTracker] Meeting end sent to background');
+            console.log(`[${new Date().toISOString()}] ✅ Meeting end sent to background:`, response);
           }
         });
       }
     } catch (error) {
-      console.log(`[SimpleMeetTracker] Failed to send meeting ${eventType} to background:`, error.message);
+      console.log(`[${new Date().toISOString()}] ❌ Failed to send meeting ${eventType} to background:`, error.message);
     }
   }
 
