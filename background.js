@@ -10,9 +10,10 @@ let currentMeetingState = {
     networkParticipants: 0
 };
 
-// Session-based meeting tracking (NEW APPROACH)
+// Session-based meeting tracking (PERSISTENT APPROACH)
 let activeSessions = {}; // Maps sessionId to session data
 let meetingToSessionMap = {}; // Maps meetingId to current sessionId
+let sessionDataLoaded = false; // Flag to track if we've loaded persistent data
 
 // Initialize storage manager
 let storageManager = null;
@@ -108,8 +109,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         try {
             switch (messageType) {
                 case 'update_participants':
-                    await handleParticipantsUpdate(request.data, sender);
-                    sendResponse({ success: true });
+                    const sessionInfo = await handleParticipantsUpdate(request.data, sender);
+                    sendResponse({ 
+                        success: true, 
+                        sessionId: sessionInfo?.sessionId,
+                        sessionStartTime: sessionInfo?.sessionStartTime
+                    });
                     break;
                     
                 case 'update_meeting_state':
@@ -258,22 +263,19 @@ async function handleMeetingEnded(meeting, sender) {
         return;
     }
     
-    // End the active session for this meeting
-    await endActiveSession(meetingId, 'meeting_ended');
+    console.log('📋 Meeting end request from content script:', {
+        meetingId,
+        title: meeting.title,
+        reason: meeting.reason,
+        participantCount: meeting.participants?.length || 0,
+        note: 'Background script manages all session timing - content script provides meeting ID only'
+    });
     
-    // Also save to old meeting format for backward compatibility
-    const finalMeeting = {
-        ...meeting,
-        endTime: meeting.endTime || Date.now() // Set endTime if not already set
-    };
+    // End the active session for this meeting using session-based approach
+    // Background script manages ALL timing - content script only provides meeting ID and reason
+    await endActiveSession(meetingId, meeting.reason || 'meeting_ended');
     
-    const duration = finalMeeting.endTime - finalMeeting.startTime;
-    console.log(`📊 Meeting duration: ${Math.round(duration / 60000)} minutes`);
-    
-    // Save final meeting data with endTime (for backward compatibility)
-    await saveMeeting(finalMeeting);
-    
-    // Reset state
+    // Reset current meeting state
     currentMeetingState = {
         state: 'none',
         participants: [],
@@ -283,6 +285,8 @@ async function handleMeetingEnded(meeting, sender) {
     
     // Update icon
     updateIcon('none', []);
+    
+    console.log('✅ Meeting end processed via session-based approach');
 }
 
 // Handle participants update from network interception (SESSION-BASED APPROACH)
@@ -297,41 +301,47 @@ async function handleParticipantsUpdate(data, sender) {
     console.log(`💶 Participants update: ${participants.length} participants in ${meetingId}`);
     console.log(`   Network: ${networkParticipants}, DOM: ${domParticipants}, Avatars: ${avatarCount}`);
     
+    // Ensure we've loaded persistent session data on first access
+    await ensureSessionDataLoaded();
+    
     // Check if we have an active session for this meeting
     const currentSessionId = meetingToSessionMap[meetingId];
     let activeSession = currentSessionId ? activeSessions[currentSessionId] : null;
     
+    // If no session in memory, check if we have a recent ongoing session in storage
     if (!activeSession) {
-        // ALWAYS create a new session for each join - no continuation logic
-        const sessionId = storageManager ? storageManager.generateSessionId() : `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const startTime = Date.now();
+        console.log(`🔍 No active session in memory for meeting ${meetingId}, checking storage and creating/continuing session`);
+        activeSession = await findOrCreateSession(meetingId, meetingTitle, participants, sender, networkParticipants);
+    } else {
+        console.log(`🗋 Found existing session in memory: ${activeSession.sessionId}`);
+    }
+    
+    console.log(`📝 Using session ${activeSession.sessionId} for meeting ${meetingId}`);
+    console.log(`   Session started: ${new Date(activeSession.startTime).toISOString()}`);
+    console.log(`   Current duration: ${Math.round((Date.now() - activeSession.startTime) / 60000)} minutes`);
+    console.log(`   Session details:`, {
+        sessionId: activeSession.sessionId,
+        meetingId: activeSession.meetingId,
+        title: activeSession.title,
+        startTime: new Date(activeSession.startTime).toISOString(),
+        isActive: activeSession.isActive,
+        continued: activeSession.continued,
+        fallback: activeSession.fallback
+    });
+    
+    // Always update existing session (but don't recreate it!)
+    if (activeSession) {
+        // Update existing session data
+        activeSession.participants = participants;
+        activeSession.lastUpdated = Date.now();
         
-        console.log(`🚀 Starting NEW session for meeting: ${meetingId} (session: ${sessionId})`);
-        
-        activeSession = {
-            sessionId: sessionId,
-            meetingId: meetingId,
-            title: meetingTitle || meetingId,
-            participants: participants,
-            startTime: startTime,
-            endTime: null,
-            isActive: true,
-            minuteLogs: [],
-            url: sender.tab?.url,
-            dataSource: networkParticipants > 0 ? 'network' : 'dom'
-        };
-        
-        activeSessions[sessionId] = activeSession;
-        meetingToSessionMap[meetingId] = sessionId;
-        
-        console.log(`🚀 Created new session ${sessionId} for meeting ${meetingId}`);
-        
-        // Log previous sessions for debugging
-        try {
-            const previousSessions = await getRecentSessions(meetingId);
-            console.log(`📋 Meeting ${meetingId} now has ${previousSessions.length + 1} total sessions (including this new one)`);
-        } catch (error) {
-            console.log('Could not check previous sessions:', error.message);
+        // Update title if provided
+        if (meetingTitle && meetingTitle !== activeSession.title) {
+            activeSession.title = meetingTitle;
+            if (currentMeetingState.currentMeeting) {
+                currentMeetingState.currentMeeting.title = meetingTitle;
+            }
+            console.log(`📝 Session title updated: ${meetingTitle}`);
         }
         
         // Update current meeting state to track this session
@@ -344,17 +354,6 @@ async function handleParticipantsUpdate(data, sender) {
             dataSource: activeSession.dataSource
         };
         currentMeetingState.state = 'active';
-    } else {
-        // Update existing session
-        activeSession.participants = participants;
-        activeSession.lastUpdated = Date.now();
-        
-        // Update title if provided
-        if (meetingTitle && meetingTitle !== activeSession.title) {
-            activeSession.title = meetingTitle;
-            currentMeetingState.currentMeeting.title = meetingTitle;
-            console.log(`📝 Session title updated: ${meetingTitle}`);
-        }
     }
     
     // Update participants with enhanced data
@@ -382,6 +381,12 @@ async function handleParticipantsUpdate(data, sender) {
     
     // Note: We don't save the session to storage here - sessions are only saved when they end
     // This keeps the storage operations minimal and ensures we only store complete session data
+    
+    // Return session info for content script caching
+    return {
+        sessionId: activeSession.sessionId,
+        sessionStartTime: activeSession.startTime
+    };
 }
 
 // Handle meeting state update from content script
@@ -588,6 +593,165 @@ async function getActiveSessionData() {
 }
 
 // SESSION-BASED HELPER FUNCTIONS
+
+// Ensure session data is loaded from storage on first access
+async function ensureSessionDataLoaded() {
+    if (sessionDataLoaded) {
+        return; // Already loaded
+    }
+    
+    try {
+        console.log('🔄 Loading persistent session data...');
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available for session loading');
+            sessionDataLoaded = true; // Mark as loaded (with no data)
+            return;
+        }
+        
+        // Get all ongoing sessions from storage (sessions without endTime)
+        const allSessions = await storage.getAllSessions();
+        const ongoingSessions = allSessions.filter(session => !session.endTime);
+        
+        console.log(`🔍 Found ${ongoingSessions.length} ongoing sessions in storage`);
+        
+        // Restore ongoing sessions to memory
+        for (const session of ongoingSessions) {
+            // Check if session is recent (within last 4 hours)
+            const fourHoursAgo = Date.now() - (4 * 60 * 60 * 1000);
+            if (session.startTime > fourHoursAgo) {
+                console.log(`🔄 Restoring session: ${session.sessionId} for meeting ${session.meetingId}`);
+                
+                // Restore to memory
+                activeSessions[session.sessionId] = {
+                    ...session,
+                    isActive: true,
+                    minuteLogs: session.minuteLogs || [],
+                    lastUpdated: Date.now()
+                };
+                meetingToSessionMap[session.meetingId] = session.sessionId;
+            } else {
+                // Session is too old, mark as ended
+                console.log(`⏰ Auto-ending stale session: ${session.sessionId} (${Math.round((Date.now() - session.startTime) / (60 * 60 * 1000))} hours old)`);
+                await endActiveSession(session.meetingId, 'stale_session_cleanup');
+            }
+        }
+        
+        console.log(`✅ Session data loaded: ${Object.keys(activeSessions).length} active sessions restored`);
+        sessionDataLoaded = true;
+        
+    } catch (error) {
+        console.error('❌ Error loading session data:', error);
+        sessionDataLoaded = true; // Mark as loaded even on error to prevent repeated attempts
+    }
+}
+
+// Find existing session or create new one for a meeting
+async function findOrCreateSession(meetingId, meetingTitle, participants, sender, networkParticipants) {
+    try {
+        // First check if there's a recent session for this meeting in storage
+        const storage = await ensureStorageManager();
+        if (storage) {
+            const recentSessions = await storage.getMeetingSessions(meetingId);
+            const ongoingSession = recentSessions.find(session => !session.endTime);
+            
+            if (ongoingSession) {
+                console.log(`🔄 Found ongoing session in storage: ${ongoingSession.sessionId}`);
+                
+                // Restore to memory
+                activeSessions[ongoingSession.sessionId] = {
+                    ...ongoingSession,
+                    isActive: true,
+                    participants: participants, // Update with current participants
+                    lastUpdated: Date.now(),
+                    minuteLogs: ongoingSession.minuteLogs || []
+                };
+                meetingToSessionMap[meetingId] = ongoingSession.sessionId;
+                
+                return activeSessions[ongoingSession.sessionId];
+            }
+            
+            // Check for recently ended sessions (within 10 minutes)
+            const recentSession = recentSessions
+                .filter(session => session.endTime && (Date.now() - session.endTime) < (10 * 60 * 1000))
+                .sort((a, b) => b.endTime - a.endTime)[0];
+            
+            if (recentSession) {
+                console.log(`🔄 Continuing recent session: ${recentSession.sessionId} (ended ${Math.round((Date.now() - recentSession.endTime) / 60000)} minutes ago)`);
+                
+                // Create a new session that continues from the recent one
+                const sessionId = storage.generateSessionId();
+                const activeSession = {
+                    sessionId: sessionId,
+                    meetingId: meetingId,
+                    title: meetingTitle || recentSession.title || meetingId,
+                    participants: participants,
+                    startTime: recentSession.startTime, // Continue with original start time
+                    endTime: null,
+                    isActive: true,
+                    minuteLogs: recentSession.minuteLogs || [],
+                    url: sender.tab?.url,
+                    dataSource: networkParticipants > 0 ? 'network' : 'dom',
+                    continued: true,
+                    originalSessionId: recentSession.sessionId
+                };
+                
+                activeSessions[sessionId] = activeSession;
+                meetingToSessionMap[meetingId] = sessionId;
+                
+                return activeSession;
+            }
+        }
+        
+        // No existing session found, create a new one
+        const sessionId = storage ? storage.generateSessionId() : `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const startTime = Date.now();
+        
+        console.log(`🚀 Creating NEW session for meeting: ${meetingId} (session: ${sessionId})`);
+        
+        const activeSession = {
+            sessionId: sessionId,
+            meetingId: meetingId,
+            title: meetingTitle || meetingId,
+            participants: participants,
+            startTime: startTime,
+            endTime: null,
+            isActive: true,
+            minuteLogs: [],
+            url: sender.tab?.url,
+            dataSource: networkParticipants > 0 ? 'network' : 'dom'
+        };
+        
+        activeSessions[sessionId] = activeSession;
+        meetingToSessionMap[meetingId] = sessionId;
+        
+        return activeSession;
+        
+    } catch (error) {
+        console.error('❌ Error finding/creating session:', error);
+        
+        // Fallback: create basic session
+        const sessionId = `fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const activeSession = {
+            sessionId: sessionId,
+            meetingId: meetingId,
+            title: meetingTitle || meetingId,
+            participants: participants,
+            startTime: Date.now(),
+            endTime: null,
+            isActive: true,
+            minuteLogs: [],
+            url: sender.tab?.url,
+            dataSource: networkParticipants > 0 ? 'network' : 'dom',
+            fallback: true
+        };
+        
+        activeSessions[sessionId] = activeSession;
+        meetingToSessionMap[meetingId] = sessionId;
+        
+        return activeSession;
+    }
+}
 
 // Get recent sessions for a meeting ID (used for debugging/logging)
 async function getRecentSessions(meetingId) {
@@ -1151,7 +1315,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     console.log('🗂️ Tab removed:', tabId);
     
-    // Check if removed tab was a meeting tab and if we have an active meeting
+    // SIMPLIFIED: Only end session if ALL Meet tabs are closed
     if (currentMeetingState.state === 'active' && currentMeetingState.currentMeeting) {
         try {
             // Query remaining Google Meet tabs
@@ -1159,23 +1323,11 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
             console.log(`📍 ${tabs.length} Google Meet tabs remaining after tab ${tabId} closed`);
             
             if (tabs.length === 0) {
-                console.log('🚫 No more Meet tabs, automatically ending zombie meeting');
+                console.log('🚫 No more Meet tabs, ending current session');
                 
-                // End the current meeting since no tabs are open
-                const endTime = Date.now();
-                const finalMeeting = {
-                    ...currentMeetingState.currentMeeting,
-                    endTime,
-                    participants: currentMeetingState.participants,
-                    autoEnded: true, // Mark that this was auto-ended due to tab closure
-                    reason: 'tab_closed'
-                };
-                
-                // Save the meeting
-                await saveMeeting(finalMeeting);
-                
-                const duration = endTime - finalMeeting.startTime;
-                console.log(`🔧 Auto-ended zombie meeting after ${Math.round(duration / 60000)} minutes (reason: tab closed)`);
+                // End the current session using the session-based approach
+                const meetingId = currentMeetingState.currentMeeting.id;
+                await endActiveSession(meetingId, 'all_tabs_closed');
                 
                 // Reset state
                 currentMeetingState = {
@@ -1188,73 +1340,12 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
                 // Update icon
                 updateIcon('none', []);
             } else {
-                // There are still Meet tabs open, but check if any are active
-                console.log(`📋 Checking remaining ${tabs.length} Meet tabs for active meetings...`);
-                
-                let hasActiveMeeting = false;
-                for (const tab of tabs) {
-                    try {
-                        // Send a message to check if the tab has an active meeting
-                        const response = await new Promise((resolve) => {
-                            chrome.tabs.sendMessage(tab.id, { type: 'get_meeting_state' }, (response) => {
-                                // Ignore chrome.runtime.lastError to avoid console errors
-                                resolve(response);
-                            });
-                        });
-                        
-                        if (response && response.meetingState && response.meetingState.isActive) {
-                            hasActiveMeeting = true;
-                            console.log(`📍 Found active meeting in tab ${tab.id}`);
-                            break;
-                        }
-                    } catch (error) {
-                        // Tab might not respond, continue checking others
-                        console.log(`Could not check tab ${tab.id}:`, error.message);
-                    }
-                }
-                
-                if (!hasActiveMeeting) {
-                    console.log('🚫 No active meetings found in remaining tabs, ending zombie meeting');
-                    
-                    // End the current meeting since no active meetings were found
-                    const endTime = Date.now();
-                    const finalMeeting = {
-                        ...currentMeetingState.currentMeeting,
-                        endTime,
-                        participants: currentMeetingState.participants,
-                        autoEnded: true, // Mark that this was auto-ended
-                        reason: 'no_active_tabs'
-                    };
-                    
-                    // Save the meeting
-                    await saveMeeting(finalMeeting);
-                    
-                    const duration = endTime - finalMeeting.startTime;
-                    console.log(`🔧 Auto-ended zombie meeting after ${Math.round(duration / 60000)} minutes (reason: no active tabs)`);
-                    
-                    // Reset state
-                    currentMeetingState = {
-                        state: 'none',
-                        participants: [],
-                        currentMeeting: null,
-                        networkParticipants: 0
-                    };
-                    
-                    // Update icon
-                    updateIcon('none', []);
-                }
+                console.log(`📋 ${tabs.length} Meet tabs still open, continuing session tracking`);
+                // Don't check individual tabs for activity - let content scripts handle it
+                // This prevents false session endings
             }
         } catch (error) {
-            console.error('❌ Error during automatic zombie meeting cleanup:', error);
-            
-            // Fallback: reset state anyway to prevent permanent zombie state
-            currentMeetingState = {
-                state: 'none',
-                participants: [],
-                currentMeeting: null,
-                networkParticipants: 0
-            };
-            updateIcon('none', []);
+            console.error('❌ Error during tab removal handling:', error);
         }
     }
 });
@@ -1335,133 +1426,13 @@ async function checkExistingMeetings() {
     }
 }
 
-// Detect and cleanup zombie meetings - check every 2 minutes
+// COMPLETELY DISABLED: Zombie meeting detection that was causing sessions to end prematurely
+// This function has been completely disabled to prevent automatic session ending
+// Users can manually clean up zombie sessions via the popup if needed
 async function detectAndCleanupZombieMeetings() {
-    console.log('🕵️ Running periodic zombie meeting detection...');
-    
-    try {
-        // Check if we have an active meeting in our state
-        if (currentMeetingState.state !== 'active' || !currentMeetingState.currentMeeting) {
-            console.log('📝 No active meeting in background state, skipping zombie detection');
-            return;
-        }
-        
-        console.log(`🔍 Checking for zombie meeting: "${currentMeetingState.currentMeeting.title}" (ID: ${currentMeetingState.currentMeeting.id})`);
-        
-        // Get all Google Meet tabs
-        const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
-        console.log(`📋 Found ${tabs.length} Google Meet tabs`);
-        
-        if (tabs.length === 0) {
-            console.log('🚫 No Google Meet tabs found - ending zombie meeting');
-            await endZombieMeeting('no_meet_tabs');
-            return;
-        }
-        
-        // Check each tab to see if any has an active meeting
-        let activeMeetingFound = false;
-        let checkedTabs = 0;
-        
-        for (const tab of tabs) {
-            try {
-                console.log(`🔍 Checking tab ${tab.id}: ${tab.url} (active: ${tab.active})`);
-                
-                // For background tabs, try to inject content script if needed
-                if (!tab.active) {
-                    console.log(`📋 Tab ${tab.id} is in background - ensuring content script is active`);
-                    try {
-                        // Try to ping the content script first
-                        await new Promise((resolve, reject) => {
-                            chrome.tabs.sendMessage(tab.id, { type: 'ping' }, (response) => {
-                                if (chrome.runtime.lastError) {
-                                    reject(new Error('Content script not responding'));
-                                } else {
-                                    resolve(response);
-                                }
-                            });
-                        });
-                    } catch (pingError) {
-                        console.log(`📋 Content script not responding in tab ${tab.id}, trying to inject...`);
-                        try {
-                            await chrome.scripting.executeScript({
-                                target: { tabId: tab.id },
-                                files: ['content-simple.js']
-                            });
-                            console.log(`✅ Injected content script into background tab ${tab.id}`);
-                            // Give it a moment to initialize
-                            await new Promise(resolve => setTimeout(resolve, 1000));
-                        } catch (injectError) {
-                            console.log(`❌ Failed to inject into tab ${tab.id}:`, injectError.message);
-                            continue;
-                        }
-                    }
-                }
-                
-                // Send message to content script to get meeting state
-                const response = await new Promise((resolve) => {
-                    chrome.tabs.sendMessage(tab.id, { type: 'get_meeting_state' }, (response) => {
-                        // Ignore chrome.runtime.lastError to avoid console spam
-                        resolve(response || null);
-                    });
-                });
-                
-                checkedTabs++;
-                
-                if (response && response.meetingState) {
-                    const { meetingState, participants, participantCount } = response;
-                    console.log(`📊 Tab ${tab.id} meeting state:`, {
-                        isActive: meetingState.isActive,
-                        meetingId: meetingState.meetingId,
-                        participantCount: participantCount || 0,
-                        tabActive: tab.active
-                    });
-                    
-                    // Check if this tab has an active meeting
-                    if (meetingState.isActive && meetingState.meetingId) {
-                        activeMeetingFound = true;
-                        console.log(`✅ Found active meeting in tab ${tab.id}: ${meetingState.meetingId} (tab active: ${tab.active})`);
-                        
-                        // Update our current meeting state with fresh data if it matches
-                        if (currentMeetingState.currentMeeting.id === meetingState.meetingId) {
-                            console.log('🔄 Updating current meeting state with fresh data from tab');
-                            currentMeetingState.participants = participants || [];
-                            currentMeetingState.networkParticipants = participantCount || 0;
-                            
-                            // Update the meeting in storage with latest participant data
-                            const meeting = {
-                                ...currentMeetingState.currentMeeting,
-                                participants: participants || [],
-                                lastUpdated: Date.now()
-                            };
-                            await saveMeetingUpdate(meeting);
-                        }
-                        break; // Found active meeting, no need to check other tabs
-                    } else {
-                        console.log(`📝 Tab ${tab.id} has no active meeting`);
-                    }
-                } else {
-                    console.log(`⚠️ Tab ${tab.id} did not respond or has no meeting state`);
-                }
-                
-            } catch (error) {
-                console.log(`❌ Error checking tab ${tab.id}:`, error.message);
-                checkedTabs++;
-            }
-        }
-        
-        console.log(`📋 Checked ${checkedTabs}/${tabs.length} tabs, active meeting found: ${activeMeetingFound}`);
-        
-        // If no active meeting was found in any tab, end the zombie meeting
-        if (!activeMeetingFound) {
-            console.log('🚫 No active meetings found in any tabs - ending zombie meeting');
-            await endZombieMeeting('no_active_meeting_in_tabs');
-        } else {
-            console.log('✅ Active meeting confirmed, continuing tracking');
-        }
-        
-    } catch (error) {
-        console.error('❌ Error during zombie meeting detection:', error);
-    }
+    console.log('🚫 Zombie meeting detection DISABLED - sessions will only end on legitimate meeting end or manual cleanup');
+    // This function is intentionally empty to prevent automatic session ending
+    return;
 }
 
 // Handle meeting ended by navigation (URL change) - SESSION-BASED APPROACH

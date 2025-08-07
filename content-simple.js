@@ -274,40 +274,69 @@ class SimpleMeetTracker {
     const hasParticipants = this.participants.size > 0;
     const hasRetainedParticipants = this.getRetainedParticipants().size > 0;
     
-    // Meeting is active if it has controls OR participants (including retained ones)
-    const isActive = hasMeetingControls || hasParticipants || (this.meetingState.isActive && hasRetainedParticipants);
+    // MUCH MORE CONSERVATIVE meeting state detection
+    // Once a meeting is active, require STRONG evidence it has ended
+    let isActive;
+    
+    if (this.meetingState.isActive) {
+      // If meeting is already active, be very conservative about ending it
+      // Only end if we have STRONG evidence the meeting ended
+      const hasStrongEndEvidence = this.hasStrongMeetingEndEvidence();
+      
+      if (hasStrongEndEvidence) {
+        console.log(`[${new Date().toISOString()}] 🛑 Strong evidence meeting ended - allowing end`);
+        isActive = false;
+      } else {
+        // Keep meeting active if we don't have strong end evidence
+        // Even if controls or participants are temporarily not detected
+        isActive = true;
+        console.log(`[${new Date().toISOString()}] 🔄 No strong end evidence - keeping meeting active (controls: ${hasMeetingControls}, participants: ${hasParticipants}, retained: ${hasRetainedParticipants})`);
+      }
+    } else {
+      // If meeting is not active, use normal detection to start it
+      isActive = hasMeetingControls || hasParticipants || hasRetainedParticipants;
+    }
 
     if (isActive && !this.meetingState.isActive) {
-      // Meeting started - let the session-based background handle the logic
-      const startTime = Date.now();
+      // Meeting started - but DON'T set a new startTime, let background handle sessions
       
-      // Simple meeting start - let background script handle session continuation
+      // Set content script meeting state but DON'T override background session timing
       this.meetingState = {
         isActive: true,
         meetingId,
-        startTime: startTime,
+        startTime: null, // Let background determine the actual start time
         meetingTitle: this.getMeetingTitle(),
-        resumed: false // This doesn't matter anymore - background handles sessions
+        resumed: false
       };
       
-      console.log(`[${new Date().toISOString()}] 🚀 MEETING STARTED:`, {
+      console.log(`[${new Date().toISOString()}] 🚀 CONTENT SCRIPT: Meeting became active, letting background handle session timing:`, {
         meetingId: this.meetingState.meetingId,
         meetingTitle: this.meetingState.meetingTitle,
-        startTime: new Date(startTime).toISOString(),
         url: window.location.href,
-        participantCount: this.participants.size
+        participantCount: this.participants.size,
+        note: 'Content script will NOT send meeting start - background handles session creation via participant updates'
       });
       
-      // Send meeting start to background - background will handle session logic
-      this.sendMeetingStateToBackground('started');
+      // DON'T send meeting start - let the background handle session creation
+      // The background will create/continue sessions based on participant updates
+      // this.sendMeetingStateToBackground('started'); // REMOVED
       
-      // Start continuous minute tracking
-      console.log(`[${new Date().toISOString()}] ⏱️ Starting minute-by-minute tracking for meeting`);
+      // Start continuous minute tracking (but duration calculation will be based on background session)
+      console.log(`[${new Date().toISOString()}] ⏱️ Starting minute-by-minute tracking (duration from background session)`);
       this.startMinuteTracking();
       
     } else if (!isActive && this.meetingState.isActive) {
-      // Meeting ended - but ensure we have the final participant list
+      // Meeting ended with strong evidence - process the end
       const endTime = Date.now();
+      
+      console.log(`[${new Date().toISOString()}] 🏁 MEETING ENDED WITH STRONG EVIDENCE:`, {
+        meetingId: this.meetingState.meetingId,
+        meetingTitle: this.meetingState.meetingTitle,
+        durationMinutes: Math.round((endTime - this.meetingState.startTime) / 60000),
+        finalParticipantCount: this.participants.size,
+        endTime: new Date(endTime).toISOString(),
+        reason: 'strong_end_evidence'
+      });
       
       // If we have no current participants, try to use retained participants for the final count
       if (this.participants.size === 0) {
@@ -320,20 +349,6 @@ class SimpleMeetTracker {
       
       this.meetingState.isActive = false;
       this.meetingState.endTime = endTime;
-      
-      const totalDuration = endTime - this.meetingState.startTime;
-      const sessionDuration = this.meetingState.resumedAt ? 
-        endTime - this.meetingState.resumedAt : totalDuration;
-      
-      console.log(`[${new Date().toISOString()}] 🏁 MEETING ENDED:`, {
-        meetingId: this.meetingState.meetingId,
-        meetingTitle: this.meetingState.meetingTitle,
-        totalDurationMinutes: Math.round(totalDuration / 60000),
-        sessionDurationMinutes: Math.round(sessionDuration / 60000),
-        finalParticipantCount: this.participants.size,
-        finalParticipants: Array.from(this.participants.values()).map(p => p.name),
-        endTime: new Date(endTime).toISOString()
-      });
       
       // Send meeting end to background with final meeting data (including retained participants)
       this.sendMeetingStateToBackground('ended');
@@ -520,6 +535,10 @@ class SimpleMeetTracker {
           if (response?.sessionId) {
             console.log(`[${new Date().toISOString()}] 🆔 Session ID: ${response.sessionId}`);
           }
+          // Update cached session start time from background response
+          if (response?.sessionStartTime) {
+            this.updateCachedSessionStartTime(response.sessionStartTime);
+          }
         }
       });
     } catch (error) {
@@ -534,22 +553,25 @@ class SimpleMeetTracker {
       return;
     }
 
+    // CRITICAL: Content script should NEVER send timing data for session-based meetings
+    // Background script manages ALL session timing internally
     const meetingData = {
       id: this.meetingState.meetingId,
       title: this.meetingState.meetingTitle,
-      startTime: this.meetingState.startTime,
-      endTime: this.meetingState.endTime,
+      // startTime: REMOVED - background manages session timing
+      // endTime: REMOVED - background manages session timing  
       url: window.location.href,
-      participants: Array.from(this.participants.values())
+      participants: Array.from(this.participants.values()),
+      reason: eventType // Add reason for ending
     };
 
     console.log(`[${new Date().toISOString()}] 🚀 Sending meeting ${eventType} to background:`, {
       meetingId: meetingData.id,
       meetingTitle: meetingData.title,
-      startTime: meetingData.startTime ? new Date(meetingData.startTime).toISOString() : null,
-      endTime: meetingData.endTime ? new Date(meetingData.endTime).toISOString() : null,
+      // startTime/endTime removed - background manages all session timing
       participantCount: meetingData.participants.length,
-      participantNames: meetingData.participants.map(p => p.name)
+      participantNames: meetingData.participants.map(p => p.name),
+      reason: meetingData.reason
     });
 
     try {
@@ -640,8 +662,18 @@ class SimpleMeetTracker {
     
     const currentTime = Date.now();
     
-    // Simple duration calculation - let background handle session logic
-    const cumulativeDuration = currentTime - this.meetingState.startTime;
+    // Get the actual session start time from background state instead of content script state
+    // This prevents duration calculation from being affected by content script restarts
+    const sessionStartTime = this.getSessionStartTime();
+    
+    // CRITICAL: If we don't have a cached session start time, request it from background FIRST
+    if (!sessionStartTime) {
+      console.log('[SimpleMeetTracker] ⚠️ No cached session start time - requesting from background before logging minute');
+      this.requestSessionStartTimeFromBackground();
+      return; // Skip this minute log until we have the correct start time
+    }
+    
+    const cumulativeDuration = currentTime - sessionStartTime;
     const currentMinute = Math.floor(cumulativeDuration / 60000); // Minutes since start
     
     // Only log if this is a new minute
@@ -830,33 +862,56 @@ class SimpleMeetTracker {
     return name.trim();
   }
 
-  // Check for zombie meetings (meetings that should have ended)
-  checkForZombieMeeting() {
-    if (!this.meetingState.isActive) return;
+  // New method: Check for STRONG evidence that a meeting has ended
+  // This is much more conservative than the old zombie detection
+  hasStrongMeetingEndEvidence() {
+    // Only return true if we have VERY strong evidence the meeting ended
     
-    const now = Date.now();
-    const timeSinceLastActivity = now - (this.lastParticipantVisibility || this.meetingState.startTime);
+    // Check for explicit meeting end UI text
+    const bodyText = document.body.textContent || '';
+    const strongEndTexts = [
+      'You left the meeting',
+      'The meeting has ended', 
+      'Thanks for joining',
+      'Meeting ended',
+      'You have left the meeting',
+      'Return to home screen'
+    ];
     
-    // If no participants detected for 2 minutes and no meeting controls visible
-    if (timeSinceLastActivity > 2 * 60 * 1000) {
-      console.log('[SimpleMeetTracker] Zombie meeting detected - ending meeting after 2 minutes of inactivity');
-      
-      // Force end the meeting
-      this.meetingState.isActive = false;
-      this.meetingState.endTime = now;
-      
-      // Send meeting end to background
-      this.sendMeetingStateToBackground('ended');
-      
-      // Stop minute tracking
-      this.stopMinuteTracking();
-      
-      // Clear participants
-      this.participants.clear();
-      
-      // Reset state
-      this.lastParticipantVisibility = null;
+    for (let text of strongEndTexts) {
+      if (bodyText.includes(text)) {
+        console.log(`[SimpleMeetTracker] ✅ Strong end evidence found: "${text}"`);
+        return true;
+      }
     }
+    
+    // Check for explicit rejoin or return buttons (strong indicators)
+    const rejoinButton = document.querySelector('button[aria-label*="Rejoin"], button[aria-label*="Join again"]');
+    const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"], a[href="/"]');
+    
+    if (rejoinButton || returnHomeButton) {
+      console.log(`[SimpleMeetTracker] ✅ Strong end evidence: Post-meeting buttons found (Rejoin: ${!!rejoinButton}, Home: ${!!returnHomeButton})`);
+      return true;
+    }
+    
+    // If we're on a different URL pattern that indicates meeting ended
+    const currentUrl = window.location.href;
+    if (currentUrl.includes('/landing/') || currentUrl.includes('/ended/') || currentUrl.includes('/thankyou/')) {
+      console.log(`[SimpleMeetTracker] ✅ Strong end evidence: On post-meeting URL: ${currentUrl}`);
+      return true;
+    }
+    
+    // NO strong evidence found - keep meeting active
+    console.log(`[SimpleMeetTracker] ❌ No strong end evidence found - meeting should remain active`);
+    return false;
+  }
+  
+  // DISABLED: Old zombie meeting detection - completely disabled to prevent premature session ending
+  // Users can manually clean up sessions if needed via popup controls
+  checkForZombieMeeting() {
+    console.log('[SimpleMeetTracker] Zombie meeting detection DISABLED - use manual cleanup if needed');
+    // This method is completely disabled to prevent automatic meeting ending
+    return;
   }
   
   // REMOVED: Aggressive meeting state checking - was ending valid meetings
@@ -1086,7 +1141,12 @@ class SimpleMeetTracker {
       console.log(`[SimpleMeetTracker] Tab visibility changed: ${isVisible ? 'visible' : 'hidden'}`);
       
       if (isVisible && this.meetingState.isActive) {
-        console.log('[SimpleMeetTracker] Tab became visible - checking meeting state');
+        console.log('[SimpleMeetTracker] 📱 Tab became visible - syncing with background and checking meeting state');
+        
+        // CRITICAL: When tab becomes visible, immediately request session start time from background
+        // This ensures we have the correct session timing after tab suspension
+        this.requestSessionStartTimeFromBackground();
+        
         setTimeout(() => {
           this.scanForParticipants();
           this.updateMeetingState();
@@ -1102,7 +1162,12 @@ class SimpleMeetTracker {
     window.addEventListener('focus', () => {
       console.log('[SimpleMeetTracker] Window focused');
       if (this.meetingState.isActive) {
-        console.log('[SimpleMeetTracker] Window focused - checking meeting state');
+        console.log('[SimpleMeetTracker] 🔍 Window focused - syncing session timing and checking meeting state');
+        
+        // Request session timing from background when window gets focus
+        // This helps after system sleep/wake or app switching
+        this.requestSessionStartTimeFromBackground();
+        
         setTimeout(() => {
           this.scanForParticipants();
           this.updateMeetingState();
@@ -1187,6 +1252,49 @@ class SimpleMeetTracker {
       });
     } catch (error) {
       console.log('[SimpleMeetTracker] Failed to send navigation end to background:', error.message);
+    }
+  }
+
+  // Get session start time from background (to avoid content script time resets)
+  getSessionStartTime() {
+    // We can't easily query the background synchronously, so use a cached value
+    // This will be updated when we receive responses from the background
+    return this.cachedSessionStartTime || null;
+  }
+  
+  // Update cached session start time when we get responses from background
+  updateCachedSessionStartTime(startTime) {
+    if (startTime && (!this.cachedSessionStartTime || startTime < this.cachedSessionStartTime)) {
+      this.cachedSessionStartTime = startTime;
+      console.log(`[SimpleMeetTracker] 📅 Cached session start time: ${new Date(startTime).toISOString()}`);
+    }
+  }
+  
+  // Request session start time from background (for when cache is missing)
+  requestSessionStartTimeFromBackground() {
+    if (!chrome?.runtime?.id) {
+      console.log('[SimpleMeetTracker] Extension context invalidated, cannot request session start time');
+      return;
+    }
+
+    try {
+      chrome.runtime.sendMessage({
+        type: 'getActiveSession'
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.log('[SimpleMeetTracker] Error requesting session start time:', chrome.runtime.lastError.message);
+        } else if (response && response.currentMeeting && response.currentMeeting.startTime) {
+          console.log(`[SimpleMeetTracker] 🔄 Retrieved session start time from background: ${new Date(response.currentMeeting.startTime).toISOString()}`);
+          this.updateCachedSessionStartTime(response.currentMeeting.startTime);
+          
+          // Now that we have the start time, log the current minute
+          setTimeout(() => this.logCurrentMinute(), 100);
+        } else {
+          console.log('[SimpleMeetTracker] ⚠️ No active session found in background');
+        }
+      });
+    } catch (error) {
+      console.log('[SimpleMeetTracker] Failed to request session start time from background:', error.message);
     }
   }
 
