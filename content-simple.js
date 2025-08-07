@@ -6,6 +6,7 @@ console.log('[SimpleMeetTracker] Starting simple participant tracker...');
 class SimpleMeetTracker {
   constructor() {
     this.participants = new Map();
+    this.participantMemory = new Map(); // Persistent participant memory
     this.meetingState = {
       isActive: false,
       meetingId: null,
@@ -15,6 +16,8 @@ class SimpleMeetTracker {
     this.lastUpdate = Date.now();
     this.minuteTrackingInterval = null;
     this.lastMinuteLogged = null;
+    this.lastParticipantDetection = null;
+    this.participantRetentionTime = 3 * 60 * 1000; // Keep participants for 3 minutes
     
     this.init();
   }
@@ -143,25 +146,48 @@ class SimpleMeetTracker {
 
   scanForParticipants() {
     const participantElements = document.querySelectorAll('*[data-participant-id]');
+    const now = Date.now();
     
     if (participantElements.length === 0) {
+      console.log('[SimpleMeetTracker] ⚠️ No participant elements found');
+      
       // Check if we're in a meeting but participants panel is closed
       const meetingControls = document.querySelectorAll('[data-is-muted], [data-is-video-on]');
       if (meetingControls.length > 0) {
-        console.log('[SimpleMeetTracker] In meeting but participants panel may be closed');
-        // Mark that we've lost participant visibility but meeting is still active
-        this.lastParticipantVisibility = Date.now();
+        console.log('[SimpleMeetTracker] ✅ In meeting but participants panel may be closed - using retained participants');
+        this.lastParticipantVisibility = now;
+        
+        // Use retained participants from memory
+        const retainedParticipants = this.getRetainedParticipants();
+        if (retainedParticipants.size > 0) {
+          console.log(`[SimpleMeetTracker] 🧠 Using ${retainedParticipants.size} retained participants from memory`);
+          this.participants = retainedParticipants;
+          
+          // Send retained participants to background
+          this.sendUpdateToBackground();
+          return;
+        }
       } else {
-        // No meeting controls, meeting might be ending
+        // No meeting controls - check if we should use retained participants
+        const retainedParticipants = this.getRetainedParticipants();
+        if (retainedParticipants.size > 0 && this.meetingState.isActive) {
+          console.log(`[SimpleMeetTracker] 🧠 No controls but meeting active - using ${retainedParticipants.size} retained participants`);
+          this.participants = retainedParticipants;
+          this.sendUpdateToBackground();
+          return;
+        }
+        
+        // No participants and no controls - might be zombie meeting
         this.checkForZombieMeeting();
       }
       return;
     }
 
-    console.log(`[SimpleMeetTracker] Found ${participantElements.length} participant elements`);
+    console.log(`[SimpleMeetTracker] 🔍 Found ${participantElements.length} participant elements`);
 
     let newParticipants = 0;
     const currentParticipants = new Map();
+    const validParticipants = new Map();
 
     participantElements.forEach(element => {
       const id = element.dataset.participantId;
@@ -183,34 +209,56 @@ class SimpleMeetTracker {
         id,
         name,
         avatarUrl,
-        joinTime: this.participants.get(id)?.joinTime || Date.now(),
-        lastSeen: Date.now(),
+        joinTime: this.participants.get(id)?.joinTime || this.participantMemory.get(id)?.joinTime || now,
+        lastSeen: now,
         source: 'dom'
       };
 
       // Check if this is a new participant
-      if (!this.participants.has(id)) {
+      if (!this.participants.has(id) && !this.participantMemory.has(id)) {
         newParticipants++;
-        console.log(`[SimpleMeetTracker] New participant: ${name}`);
+        console.log(`[SimpleMeetTracker] ➕ New participant: ${name}`);
       } else {
         // Check if name changed (better detection)
-        const existing = this.participants.get(id);
-        if (existing.name !== name && this.isValidParticipantName(name)) {
-          console.log(`[SimpleMeetTracker] Participant name updated: ${existing.name} → ${name}`);
+        const existing = this.participants.get(id) || this.participantMemory.get(id);
+        if (existing && existing.name !== name && this.isValidParticipantName(name)) {
+          console.log(`[SimpleMeetTracker] 📝 Participant name updated: ${existing.name} → ${name}`);
           participant.joinTime = existing.joinTime; // Preserve original join time
         }
       }
 
       currentParticipants.set(id, participant);
+      validParticipants.set(id, participant);
+      
+      // Store in persistent memory
+      this.participantMemory.set(id, {
+        ...participant,
+        firstSeen: this.participantMemory.get(id)?.firstSeen || now,
+        detectionCount: (this.participantMemory.get(id)?.detectionCount || 0) + 1
+      });
     });
 
-    // Update participants list
-    this.participants = currentParticipants;
-    this.lastParticipantVisibility = Date.now();
+    // Clean up old participants from memory (older than retention time)
+    this.cleanupParticipantMemory(now);
+    
+    // If we found participants, update our detection timestamp
+    if (currentParticipants.size > 0) {
+      this.lastParticipantDetection = now;
+      console.log(`[SimpleMeetTracker] ✅ Successfully detected ${currentParticipants.size} participants`);
+    }
 
-    if (newParticipants > 0 || currentParticipants.size !== this.previousParticipantCount) {
-      this.previousParticipantCount = currentParticipants.size;
-      console.log(`[SimpleMeetTracker] Updated participant list: ${currentParticipants.size} participants`);
+    // Merge current participants with recently retained ones if needed
+    const finalParticipants = this.mergeWithRetainedParticipants(currentParticipants, now);
+
+    // Update participants list
+    this.participants = finalParticipants;
+    this.lastParticipantVisibility = now;
+
+    const participantCountChanged = finalParticipants.size !== this.previousParticipantCount;
+    
+    if (newParticipants > 0 || participantCountChanged) {
+      this.previousParticipantCount = finalParticipants.size;
+      console.log(`[SimpleMeetTracker] 📊 Updated participant list: ${finalParticipants.size} participants (${Array.from(finalParticipants.values()).map(p => p.name).join(', ')})`);
       
       // Update meeting state
       this.updateMeetingState();
@@ -222,7 +270,12 @@ class SimpleMeetTracker {
 
   updateMeetingState() {
     const meetingId = this.getMeetingId();
-    const isActive = this.participants.size > 0 || this.hasMeetingControls();
+    const hasMeetingControls = this.hasMeetingControls();
+    const hasParticipants = this.participants.size > 0;
+    const hasRetainedParticipants = this.getRetainedParticipants().size > 0;
+    
+    // Meeting is active if it has controls OR participants (including retained ones)
+    const isActive = hasMeetingControls || hasParticipants || (this.meetingState.isActive && hasRetainedParticipants);
 
     if (isActive && !this.meetingState.isActive) {
       // Meeting started - let the session-based background handle the logic
@@ -237,7 +290,7 @@ class SimpleMeetTracker {
         resumed: false // This doesn't matter anymore - background handles sessions
       };
       
-      console.log(`[SimpleMeetTracker] Meeting detected: ${this.meetingState.meetingTitle} at ${new Date(startTime).toLocaleTimeString()}`);
+      console.log(`[SimpleMeetTracker] 🚀 Meeting detected: ${this.meetingState.meetingTitle} at ${new Date(startTime).toLocaleTimeString()}`);
       
       // Send meeting start to background - background will handle session logic
       this.sendMeetingStateToBackground('started');
@@ -246,8 +299,18 @@ class SimpleMeetTracker {
       this.startMinuteTracking();
       
     } else if (!isActive && this.meetingState.isActive) {
-      // Meeting ended
+      // Meeting ended - but ensure we have the final participant list
       const endTime = Date.now();
+      
+      // If we have no current participants, try to use retained participants for the final count
+      if (this.participants.size === 0) {
+        const retainedParticipants = this.getRetainedParticipants();
+        if (retainedParticipants.size > 0) {
+          console.log(`[SimpleMeetTracker] 🧠 Meeting ending but using ${retainedParticipants.size} retained participants for final count`);
+          this.participants = retainedParticipants;
+        }
+      }
+      
       this.meetingState.isActive = false;
       this.meetingState.endTime = endTime;
       
@@ -255,9 +318,9 @@ class SimpleMeetTracker {
       const sessionDuration = this.meetingState.resumedAt ? 
         endTime - this.meetingState.resumedAt : totalDuration;
       
-      console.log(`[SimpleMeetTracker] Meeting ended - Total: ${Math.round(totalDuration / 60000)}m, Session: ${Math.round(sessionDuration / 60000)}m`);
+      console.log(`[SimpleMeetTracker] 🏁 Meeting ended - Total: ${Math.round(totalDuration / 60000)}m, Session: ${Math.round(sessionDuration / 60000)}m, Final participants: ${this.participants.size}`);
       
-      // Send meeting end to background with final meeting data
+      // Send meeting end to background with final meeting data (including retained participants)
       this.sendMeetingStateToBackground('ended');
       
       // Stop minute tracking
@@ -265,6 +328,12 @@ class SimpleMeetTracker {
       
       // Clear participants since meeting ended
       this.participants.clear();
+      
+      // Clear participant memory after a longer delay to ensure proper meeting end processing
+      setTimeout(() => {
+        console.log('[SimpleMeetTracker] 🧹 Clearing participant memory after meeting end');
+        this.participantMemory.clear();
+      }, 10000); // 10 seconds delay
     }
 
     // Update meeting title if it changed
@@ -1169,6 +1238,81 @@ class SimpleMeetTracker {
     
     console.log('[SimpleMeetTracker] Manually ending meeting:', this.meetingState.meetingTitle);
     return this.forceEndMeetingInternal('manual_cleanup');
+  }
+  
+  // Participant memory management methods
+  getRetainedParticipants() {
+    const now = Date.now();
+    const retainedParticipants = new Map();
+    
+    // Return participants that were seen recently (within retention time)
+    for (const [id, participant] of this.participantMemory) {
+      const timeSinceLastSeen = now - participant.lastSeen;
+      if (timeSinceLastSeen <= this.participantRetentionTime) {
+        retainedParticipants.set(id, {
+          id: participant.id,
+          name: participant.name,
+          avatarUrl: participant.avatarUrl,
+          joinTime: participant.joinTime || participant.firstSeen,
+          lastSeen: participant.lastSeen,
+          source: 'memory',
+          retainedFor: timeSinceLastSeen
+        });
+      }
+    }
+    
+    console.log(`[SimpleMeetTracker] 🧠 Retrieved ${retainedParticipants.size} participants from memory (${Array.from(retainedParticipants.values()).map(p => p.name).join(', ')})`);
+    return retainedParticipants;
+  }
+  
+  cleanupParticipantMemory(now) {
+    const beforeCount = this.participantMemory.size;
+    const maxRetentionTime = this.participantRetentionTime * 2; // Keep in memory for twice as long
+    
+    // Remove participants that haven't been seen for a very long time
+    for (const [id, participant] of this.participantMemory) {
+      const timeSinceLastSeen = now - participant.lastSeen;
+      if (timeSinceLastSeen > maxRetentionTime) {
+        this.participantMemory.delete(id);
+      }
+    }
+    
+    const afterCount = this.participantMemory.size;
+    if (beforeCount !== afterCount) {
+      console.log(`[SimpleMeetTracker] 🧹 Cleaned up participant memory: ${beforeCount} → ${afterCount} participants`);
+    }
+  }
+  
+  mergeWithRetainedParticipants(currentParticipants, now) {
+    if (currentParticipants.size === 0 && this.meetingState.isActive) {
+      // If no current participants but meeting is active, use retained participants
+      const retainedParticipants = this.getRetainedParticipants();
+      if (retainedParticipants.size > 0) {
+        console.log(`[SimpleMeetTracker] 🔄 No current participants detected, using ${retainedParticipants.size} retained participants`);
+        return retainedParticipants;
+      }
+    } else if (currentParticipants.size > 0) {
+      // If we have current participants, use them but also check if we should merge with retained ones
+      const retainedParticipants = this.getRetainedParticipants();
+      
+      // Add any retained participants that aren't in current list (they might have temporarily disappeared)
+      for (const [id, retainedParticipant] of retainedParticipants) {
+        if (!currentParticipants.has(id)) {
+          // Only add if they were seen very recently (within 30 seconds)
+          const timeSinceLastSeen = now - retainedParticipant.lastSeen;
+          if (timeSinceLastSeen <= 30000) { // 30 seconds
+            console.log(`[SimpleMeetTracker] 🔄 Adding recently retained participant: ${retainedParticipant.name} (last seen ${Math.round(timeSinceLastSeen/1000)}s ago)`);
+            currentParticipants.set(id, {
+              ...retainedParticipant,
+              source: 'retained',
+              lastSeen: retainedParticipant.lastSeen // Keep original lastSeen time
+            });
+          }
+        }
+      }
+    }
+    
+    return currentParticipants;
   }
 }
 
