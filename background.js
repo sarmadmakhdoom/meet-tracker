@@ -1517,10 +1517,9 @@ async function endZombieMeeting(reason) {
     updateIcon('none', []);
 }
 
-// Periodic zombie meeting detection (every 2 minutes)
-setInterval(async () => {
-    await detectAndCleanupZombieMeetings();
-}, 2 * 60 * 1000); // Run every 2 minutes
+// COMPLETELY REMOVED: All timer-based zombie meeting detection
+// User has manual controls in the popup to end zombie meetings when needed
+// Keeping only legitimate meeting end detection (tab close, navigation, UI detection)
 
 // Periodically cleanup old meetings (simple setTimeout approach)
 setInterval(async () => {

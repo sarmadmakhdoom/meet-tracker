@@ -127,20 +127,13 @@ class SimpleMeetTracker {
       this.scanForParticipants();
     }, 5000);
     
-    // Additional aggressive meeting state checking every 10 seconds
-    setInterval(() => {
-      this.aggressiveMeetingStateCheck();
-    }, 10000);
+    // REMOVED: Timer-based aggressive meeting checks that were ending sessions prematurely
+    // - aggressiveMeetingStateCheck (every 10 seconds) 
+    // - frequentMeetingEndCheck (every 2 seconds)
+    // These were too aggressive and ended valid meetings
     
-    // Very frequent meeting end detection (every 2 seconds)
-    setInterval(() => {
-      this.frequentMeetingEndCheck();
-    }, 2000);
-    
-    // Network-based detection (check if Meet API calls are still happening)
+    // Keep legitimate detection mechanisms
     this.setupNetworkDetection();
-    
-    // Page visibility and focus detection
     this.setupPageVisibilityDetection();
   }
 
@@ -182,9 +175,10 @@ class SimpleMeetTracker {
           return;
         }
         
-        // No participants and no controls - might be zombie meeting
-        console.log(`[${new Date().toISOString()}] 🧟 Checking for zombie meeting (no participants, no controls)`);
-        this.checkForZombieMeeting();
+        // No participants and no controls - but DON'T automatically end the meeting
+        // User can manually end via popup if needed
+        console.log(`[${new Date().toISOString()}] ⚠️ No participants or controls detected - but continuing tracking`);
+        console.log(`[${new Date().toISOString()}] ℹ️ Use manual cleanup via popup if meeting has truly ended`);
       }
       return;
     }
@@ -622,19 +616,10 @@ class SimpleMeetTracker {
       if (this.meetingState.isActive) {
         this.logCurrentMinute();
         
-        // Check if meeting is still active by scanning for participants
-        this.scanForParticipants();
-        
-        // If no participants found for 2 minutes, assume meeting ended
-        if (this.participants.size === 0 && !this.hasMeetingControls()) {
-          const now = Date.now();
-          const timeSinceLastParticipant = now - (this.lastMinuteLogged || now);
-          
-          if (timeSinceLastParticipant > 2 * 60 * 1000) { // 2 minutes
-            console.log('[SimpleMeetTracker] No participants detected for 2 minutes, ending meeting');
-            this.updateMeetingState(); // This will trigger meeting end
-          }
-        }
+        // REMOVED: Timer-based meeting ending in minute tracking
+        // This was another source of premature meeting termination
+        // Just log minute data, don't try to end meetings based on participant absence
+        // Let natural meeting end detection handle meeting termination
       } else {
         // Stop tracking if meeting is no longer active
         this.stopMinuteTracking();
@@ -874,47 +859,13 @@ class SimpleMeetTracker {
     }
   }
   
-  // Aggressive meeting state checking - more frequent and thorough
+  // REMOVED: Aggressive meeting state checking - was ending valid meetings
+  // This method is completely disabled to prevent premature session endings
+  // Only natural meeting end detection (URL changes, DOM text) should end meetings
   aggressiveMeetingStateCheck() {
-    console.log('[SimpleMeetTracker] Running aggressive meeting state check...');
-    
-    // Check current meeting controls state
-    const hasMeetingControls = this.hasMeetingControls();
-    const hasParticipants = this.participants.size > 0;
-    const currentlyActive = this.meetingState.isActive;
-    
-    console.log(`[SimpleMeetTracker] Aggressive check: controls=${hasMeetingControls}, participants=${hasParticipants}, active=${currentlyActive}`);
-    
-    // If we think the meeting is active but there's no evidence of it
-    if (currentlyActive && !hasMeetingControls && !hasParticipants) {
-      const now = Date.now();
-      const timeSinceStart = now - this.meetingState.startTime;
-      
-      // If the meeting has been "active" for at least 5 MINUTES but shows no signs of life
-      // Increased from 30 seconds to 5 minutes to prevent premature ending
-      if (timeSinceStart > 5 * 60 * 1000) {
-        console.log(`[SimpleMeetTracker] Aggressive check: Meeting has been active for ${Math.round(timeSinceStart/60000)} minutes with no activity signs`);
-        console.log('[SimpleMeetTracker] This might be a stuck session - but NOT ending automatically');
-        console.log('[SimpleMeetTracker] Use manual cleanup if meeting has truly ended');
-        
-        // DON'T automatically end the meeting - just log the issue
-        // Let user manually end via dashboard or let natural meeting end detection handle it
-        // this.meetingState.isActive = false;
-        // this.meetingState.endTime = now;
-        // this.sendMeetingStateToBackground('ended');
-        // this.stopMinuteTracking();
-        // this.participants.clear();
-        
-        console.log('[SimpleMeetTracker] Continuing to track - meeting may still be active in background');
-        return;
-      }
-    }
-    
-    // Force a fresh scan for participants
-    this.scanForParticipants();
-    
-    // Update meeting state based on fresh data
-    this.updateMeetingState();
+    console.log('[SimpleMeetTracker] Aggressive meeting state check DISABLED - use manual cleanup if needed');
+    // Do nothing - this method is completely disabled
+    return;
   }
 
   setupURLChangeDetection() {
@@ -1096,46 +1047,9 @@ class SimpleMeetTracker {
     }
   }
 
-  // Frequent meeting end detection (every 2 seconds)
-  frequentMeetingEndCheck() {
-    if (!this.meetingState.isActive) return;
-    
-    // Quick checks for meeting end indicators
-    const bodyText = document.body.textContent || '';
-    const immediateEndSignals = [
-      'You left the meeting',
-      'Thanks for joining', 
-      'The meeting has ended',
-      'Meeting ended',
-      'Rejoin',
-      'Return to home screen'
-    ];
-    
-    for (let signal of immediateEndSignals) {
-      if (bodyText.includes(signal)) {
-        console.log(`[SimpleMeetTracker] Frequent check: Found end signal "${signal}" - ending meeting`);
-        this.forceEndMeetingInternal('text_detection');
-        return;
-      }
-    }
-    
-    // Check if Leave button disappeared (strong indicator)
-    const leaveButton = document.querySelector('[aria-label*="Leave call"], [aria-label*="End call"]');
-    const joinButton = document.querySelector('[aria-label*="Join"], [aria-label*="Ask to join"]');
-    
-    if (!leaveButton && joinButton) {
-      console.log('[SimpleMeetTracker] Frequent check: Leave button gone, Join button appeared - ending meeting');
-      this.forceEndMeetingInternal('button_change');
-      return;
-    }
-    
-    // Check for URL changes to non-meeting pages
-    if (!this.isMeetPage()) {
-      console.log('[SimpleMeetTracker] Frequent check: No longer on meeting page - ending meeting');
-      this.forceEndMeetingInternal('page_navigation');
-      return;
-    }
-  }
+  // REMOVED: Frequent meeting end detection - was too aggressive
+  // Only rely on natural meeting end detection through DOM observer and URL changes
+  // This method is kept for potential manual debugging but no longer called automatically
   
   // Network-based detection
   setupNetworkDetection() {
@@ -1157,18 +1071,9 @@ class SimpleMeetTracker {
       return originalFetch.apply(this, args);
     };
     
-    // Check network activity every 30 seconds
-    setInterval(() => {
-      if (this.meetingState.isActive) {
-        const timeSinceLastActivity = Date.now() - this.lastNetworkActivity;
-        
-        // If no network activity for 5 minutes, meeting might be dead
-        if (timeSinceLastActivity > 5 * 60 * 1000) {
-          console.log('[SimpleMeetTracker] No network activity for 5 minutes - checking meeting state');
-          this.aggressiveMeetingStateCheck();
-        }
-      }
-    }, 30000);
+    // REMOVED: Network-based timer detection - was ending valid meetings
+    // Just track network activity but don't use it to end meetings
+    // User can manually clean up if truly needed
   }
   
   // Page visibility and focus detection  
