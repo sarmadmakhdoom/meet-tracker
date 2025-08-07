@@ -178,6 +178,30 @@
                         </tbody>
                     </table>
                 </div>
+                
+                <!-- Pagination Controls -->
+                <div class="pagination-container" id="pagination-container" style="display: none;">
+                    <div class="pagination-info">
+                        <span id="pagination-info">Showing 0-0 of 0 meetings</span>
+                    </div>
+                    <div class="pagination-controls">
+                        <button id="first-page" class="btn btn-compact" disabled>⟨⟨</button>
+                        <button id="prev-page" class="btn btn-compact" disabled>⟨</button>
+                        <div class="page-numbers" id="page-numbers"></div>
+                        <button id="next-page" class="btn btn-compact" disabled>⟩</button>
+                        <button id="last-page" class="btn btn-compact" disabled>⟩⟩</button>
+                    </div>
+                    <div class="pagination-size">
+                        <label for="page-size-select">Show:</label>
+                        <select id="page-size-select" class="page-size-select">
+                            <option value="10">10</option>
+                            <option value="20" selected>20</option>
+                            <option value="50">50</option>
+                            <option value="100">100</option>
+                        </select>
+                        <span>per page</span>
+                    </div>
+                </div>
             </div>
         </div>
 

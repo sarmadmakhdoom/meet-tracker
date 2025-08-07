@@ -5,6 +5,11 @@ let filteredMeetings = [];
 let charts = {};
 const a_hours_work_day = 8;
 
+// Pagination state
+let currentPage = 1;
+let pageSize = 20;
+let totalPages = 1;
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeDashboard();
     setupTooltipPositioning();
@@ -237,6 +242,9 @@ function setupEventListeners() {
     if (enhancedExportBtn) {
         enhancedExportBtn.addEventListener('click', exportEnhancedData);
     }
+    
+    // Pagination event listeners
+    setupPaginationEventListeners();
 }
 
 function setDateRange(days) {
@@ -982,15 +990,33 @@ function updateRecentMeetings() {
 function updateMeetingsTable() {
     const tbody = document.getElementById('meetings-table-body');
     const countEl = document.getElementById('filtered-count');
-    countEl.textContent = `${filteredMeetings.length} meetings`;
-
+    const paginationContainer = document.getElementById('pagination-container');
+    
     if (filteredMeetings.length === 0) {
         tbody.innerHTML = '<tr class="loading-row"><td colspan="6">No meetings found</td></tr>';
+        countEl.textContent = '0 meetings';
+        paginationContainer.style.display = 'none';
         return;
     }
-
+    
+    // Calculate pagination
+    totalPages = Math.ceil(filteredMeetings.length / pageSize);
+    
+    // Ensure current page is valid
+    if (currentPage > totalPages) {
+        currentPage = 1;
+    }
+    
+    countEl.textContent = `${filteredMeetings.length} meetings`;
+    
+    // Get sorted meetings for current page
     const sorted = [...filteredMeetings].sort((a, b) => b.startTime - a.startTime);
-    tbody.innerHTML = sorted.map((m, index) => {
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const paginatedMeetings = sorted.slice(startIndex, endIndex);
+    
+    // Render meetings table
+    tbody.innerHTML = paginatedMeetings.map((m, index) => {
         // Calculate real-time duration for ongoing meetings in table
         let duration;
         if (m.endTime) {
@@ -1054,6 +1080,9 @@ function updateMeetingsTable() {
             deleteMeetingEntry(meetingId);
         });
     });
+    
+    // Update pagination controls
+    updatePaginationControls();
 }
 
 // Calculate a more intuitive efficiency score for typical 15-60 minute meetings
@@ -1545,6 +1574,116 @@ async function deleteMeetingEntry(meetingId) {
         console.error('Error deleting meeting:', error);
         alert(`❌ Error deleting meeting: ${error.message}`);
     }
+}
+
+// Pagination control functions
+function setupPaginationEventListeners() {
+    // Navigation buttons
+    document.getElementById('first-page')?.addEventListener('click', () => goToPage(1));
+    document.getElementById('prev-page')?.addEventListener('click', () => goToPage(currentPage - 1));
+    document.getElementById('next-page')?.addEventListener('click', () => goToPage(currentPage + 1));
+    document.getElementById('last-page')?.addEventListener('click', () => goToPage(totalPages));
+    
+    // Page size selector
+    document.getElementById('page-size-select')?.addEventListener('change', (e) => {
+        pageSize = parseInt(e.target.value);
+        currentPage = 1; // Reset to first page when changing page size
+        updateMeetingsTable();
+    });
+}
+
+function goToPage(page) {
+    if (page < 1 || page > totalPages) return;
+    currentPage = page;
+    updateMeetingsTable();
+}
+
+function updatePaginationControls() {
+    const paginationContainer = document.getElementById('pagination-container');
+    const paginationInfo = document.getElementById('pagination-info');
+    const pageNumbers = document.getElementById('page-numbers');
+    const firstPageBtn = document.getElementById('first-page');
+    const prevPageBtn = document.getElementById('prev-page');
+    const nextPageBtn = document.getElementById('next-page');
+    const lastPageBtn = document.getElementById('last-page');
+    
+    if (!paginationContainer) return;
+    
+    if (totalPages <= 1) {
+        paginationContainer.style.display = 'none';
+        return;
+    }
+    
+    paginationContainer.style.display = 'flex';
+    
+    // Update info text
+    const startIndex = (currentPage - 1) * pageSize + 1;
+    const endIndex = Math.min(currentPage * pageSize, filteredMeetings.length);
+    paginationInfo.textContent = `Showing ${startIndex}-${endIndex} of ${filteredMeetings.length} meetings`;
+    
+    // Update navigation buttons
+    firstPageBtn.disabled = currentPage === 1;
+    prevPageBtn.disabled = currentPage === 1;
+    nextPageBtn.disabled = currentPage === totalPages;
+    lastPageBtn.disabled = currentPage === totalPages;
+    
+    // Generate page numbers
+    generatePageNumbers();
+}
+
+function generatePageNumbers() {
+    const pageNumbers = document.getElementById('page-numbers');
+    if (!pageNumbers) return;
+    
+    pageNumbers.innerHTML = '';
+    
+    // Calculate which page numbers to show
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+    
+    // Adjust start page if we're at the end
+    if (endPage - startPage + 1 < maxVisiblePages) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+    
+    // Add first page and ellipsis if needed
+    if (startPage > 1) {
+        addPageButton(1);
+        if (startPage > 2) {
+            addEllipsis();
+        }
+    }
+    
+    // Add visible page numbers
+    for (let page = startPage; page <= endPage; page++) {
+        addPageButton(page);
+    }
+    
+    // Add ellipsis and last page if needed
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            addEllipsis();
+        }
+        addPageButton(totalPages);
+    }
+}
+
+function addPageButton(page) {
+    const pageNumbers = document.getElementById('page-numbers');
+    const button = document.createElement('button');
+    button.className = `page-number ${page === currentPage ? 'active' : ''}`;
+    button.textContent = page;
+    button.addEventListener('click', () => goToPage(page));
+    pageNumbers.appendChild(button);
+}
+
+function addEllipsis() {
+    const pageNumbers = document.getElementById('page-numbers');
+    const ellipsis = document.createElement('span');
+    ellipsis.className = 'page-ellipsis';
+    ellipsis.textContent = '…';
+    pageNumbers.appendChild(ellipsis);
 }
 
 function generateMockData() {

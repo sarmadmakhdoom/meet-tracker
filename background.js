@@ -10,6 +10,10 @@ let currentMeetingState = {
     networkParticipants: 0
 };
 
+// Session-based meeting tracking (NEW APPROACH)
+let activeSessions = {}; // Maps sessionId to session data
+let meetingToSessionMap = {}; // Maps meetingId to current sessionId
+
 // Initialize storage manager
 let storageManager = null;
 
@@ -29,12 +33,56 @@ chrome.runtime.onInstalled.addListener(async () => {
 // Initialize storage manager
 async function initializeStorageManager() {
     try {
+        console.log('💾 Initializing IndexedDB storage manager...');
+        
+        // Check if IndexedDB is available (note: service workers use 'self' instead of 'window')
+        if (!self.indexedDB && !window?.indexedDB) {
+            throw new Error('IndexedDB not supported in this browser/context');
+        }
+        
+        console.log('📋 Environment check:', {
+            isServiceWorker: typeof importScripts !== 'undefined',
+            hasWindow: typeof window !== 'undefined',
+            hasSelf: typeof self !== 'undefined',
+            hasIndexedDB: !!(self.indexedDB || window?.indexedDB),
+            userAgent: navigator.userAgent?.substring(0, 100)
+        });
+        
         storageManager = new MeetingStorageManager();
         await storageManager.init();
-        console.log('✅ IndexedDB storage manager initialized');
+        
+        console.log('✅ IndexedDB storage manager initialized successfully');
+        
+        // Test basic functionality
+        try {
+            const testMeetings = await storageManager.getMeetings();
+            console.log(`📋 IndexedDB test: Retrieved ${testMeetings.length} existing meetings`);
+        } catch (testError) {
+            console.warn('⚠️ IndexedDB test failed:', testError);
+        }
+        
     } catch (error) {
-        console.error('❌ Failed to initialize storage manager:', error);
-        // Fallback: we'll handle this in the individual functions
+        console.error('❌ Failed to initialize storage manager:');
+        console.error('Error name:', error.name || 'Unknown');
+        console.error('Error message:', error.message || 'No message');
+        console.error('Error code:', error.code || 'No code');
+        console.error('Error stack:', error.stack || 'No stack');
+        console.error('Full error object:', error);
+        
+        // Try to get more details about the error
+        try {
+            console.error('Error toString:', error.toString());
+            console.error('Error constructor:', error.constructor.name);
+            console.error('Error keys:', Object.keys(error));
+        } catch (logError) {
+            console.error('Could not log error details:', logError);
+        }
+        
+        // Set storageManager to null to indicate failure
+        storageManager = null;
+        
+        // Don't throw - let the extension continue with degraded functionality
+        console.warn('⚠️ Extension will continue with limited functionality (no persistent storage)');
     }
 }
 
@@ -202,11 +250,20 @@ async function handleMeetingUpdate(meeting, minuteData, sender) {
     await saveMeetingUpdate(meeting);
 }
 
-// Enhanced meeting ended handler  
+// Enhanced meeting ended handler (SESSION-BASED APPROACH)
 async function handleMeetingEnded(meeting, sender) {
     console.log('🚫 Meeting ended:', meeting.title || meeting.id);
     
-    // Ensure the meeting has proper endTime
+    const meetingId = meeting.id || meeting.meetingId;
+    if (!meetingId) {
+        console.error('❌ Cannot end meeting - no meeting ID provided');
+        return;
+    }
+    
+    // End the active session for this meeting
+    await endActiveSession(meetingId, 'meeting_ended');
+    
+    // Also save to old meeting format for backward compatibility
     const finalMeeting = {
         ...meeting,
         endTime: meeting.endTime || Date.now() // Set endTime if not already set
@@ -215,7 +272,7 @@ async function handleMeetingEnded(meeting, sender) {
     const duration = finalMeeting.endTime - finalMeeting.startTime;
     console.log(`📊 Meeting duration: ${Math.round(duration / 60000)} minutes`);
     
-    // Save final meeting data with endTime
+    // Save final meeting data with endTime (for backward compatibility)
     await saveMeeting(finalMeeting);
     
     // Reset state
@@ -230,7 +287,7 @@ async function handleMeetingEnded(meeting, sender) {
     updateIcon('none', []);
 }
 
-// Handle participants update from network interception (enhanced)
+// Handle participants update from network interception (SESSION-BASED APPROACH)
 async function handleParticipantsUpdate(data, sender) {
     const { meetingId, meetingTitle, participants } = data;
     
@@ -242,50 +299,84 @@ async function handleParticipantsUpdate(data, sender) {
     console.log(`💶 Participants update: ${participants.length} participants in ${meetingId}`);
     console.log(`   Network: ${networkParticipants}, DOM: ${domParticipants}, Avatars: ${avatarCount}`);
     
-    // Update current meeting state
-    if (!currentMeetingState.currentMeeting || currentMeetingState.currentMeeting.id !== meetingId) {
-        // Check if this meeting already exists in storage (rejoin scenario)
-        const existingMeeting = await findExistingOrRecentMeeting(meetingId);
+    // Check if we have an active session for this meeting
+    const currentSessionId = meetingToSessionMap[meetingId];
+    let activeSession = currentSessionId ? activeSessions[currentSessionId] : null;
+    
+    if (!activeSession) {
+        // Check if we should continue an existing session or start a new one
+        const recentSessions = await getRecentSessions(meetingId);
+        const shouldContinueSession = recentSessions.length > 0 && shouldContinueRecentSession(recentSessions[0]);
         
-        if (existingMeeting) {
-            // Rejoining an existing meeting
-            console.log(`🔄 Rejoining existing meeting: ${meetingId} (original start: ${new Date(existingMeeting.startTime).toLocaleTimeString()})`);
+        if (shouldContinueSession) {
+            // Continue the most recent session
+            const recentSession = recentSessions[0];
+            console.log(`🔄 Continuing recent session for meeting: ${meetingId} (session: ${recentSession.sessionId})`);
             
-            // Resume the existing meeting instead of creating a new one
-            currentMeetingState.currentMeeting = {
-                id: meetingId,
-                title: meetingTitle || existingMeeting.title || meetingId,
-                startTime: existingMeeting.startTime, // Keep original start time!
-                url: sender.tab?.url,
-                dataSource: networkParticipants > 0 ? 'network' : 'dom',
-                resumed: true, // Flag to indicate this was resumed
-                resumedAt: Date.now() // Track when we resumed
-            };
-            
-            // If the meeting was previously ended, remove the endTime to make it active again
-            if (existingMeeting.endTime) {
-                console.log(`🔄 Removing endTime from resumed meeting (was ended at ${new Date(existingMeeting.endTime).toLocaleTimeString()})`);
-            }
-        } else {
-            // Truly new meeting
-            const startTime = Date.now();
-            console.log(`🚀 New meeting detected: ${meetingId} at ${new Date(startTime).toLocaleTimeString()}`);
-            
-            currentMeetingState.currentMeeting = {
-                id: meetingId,
-                title: meetingTitle || meetingId,
-                startTime: startTime,
+            activeSession = {
+                sessionId: recentSession.sessionId,
+                meetingId: meetingId,
+                title: meetingTitle || recentSession.title || meetingId,
+                participants: participants,
+                startTime: recentSession.startTime, // Keep original session start time
+                continuedAt: Date.now(), // Track when we continued this session
+                endTime: null, // Remove any previous end time
+                isActive: true,
+                minuteLogs: recentSession.minuteLogs || [],
                 url: sender.tab?.url,
                 dataSource: networkParticipants > 0 ? 'network' : 'dom'
             };
+            
+            activeSessions[recentSession.sessionId] = activeSession;
+            meetingToSessionMap[meetingId] = recentSession.sessionId;
+            
+            console.log(`🔄 Continued session ${recentSession.sessionId} for meeting ${meetingId}`);
+        } else {
+            // Start a completely new session
+            const sessionId = storageManager ? storageManager.generateSessionId() : `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const startTime = Date.now();
+            
+            console.log(`🚀 Starting new session for meeting: ${meetingId} (session: ${sessionId})`);
+            
+            activeSession = {
+                sessionId: sessionId,
+                meetingId: meetingId,
+                title: meetingTitle || meetingId,
+                participants: participants,
+                startTime: startTime,
+                endTime: null,
+                isActive: true,
+                minuteLogs: [],
+                url: sender.tab?.url,
+                dataSource: networkParticipants > 0 ? 'network' : 'dom'
+            };
+            
+            activeSessions[sessionId] = activeSession;
+            meetingToSessionMap[meetingId] = sessionId;
+            
+            console.log(`🚀 Started new session ${sessionId} for meeting ${meetingId}`);
         }
         
+        // Update current meeting state to track this session
+        currentMeetingState.currentMeeting = {
+            id: meetingId,
+            title: activeSession.title,
+            startTime: activeSession.startTime,
+            sessionId: activeSession.sessionId,
+            url: activeSession.url,
+            dataSource: activeSession.dataSource
+        };
         currentMeetingState.state = 'active';
     } else {
-        // Update existing meeting title if provided
-        if (meetingTitle && meetingTitle !== currentMeetingState.currentMeeting.title) {
+        // Update existing session
+        activeSession.participants = participants;
+        activeSession.lastUpdated = Date.now();
+        
+        // Update title if provided
+        if (meetingTitle && meetingTitle !== activeSession.title) {
+            activeSession.title = meetingTitle;
             currentMeetingState.currentMeeting.title = meetingTitle;
-            console.log(`📝 Meeting title updated: ${meetingTitle}`);
+            console.log(`📝 Session title updated: ${meetingTitle}`);
         }
     }
     
@@ -300,29 +391,20 @@ async function handleParticipantsUpdate(data, sender) {
     // Update icon with enhanced information
     updateIcon('active', participants, hasNetworkData);
     
-    // Save meeting data with enhanced participant info
-    const meeting = {
-        ...currentMeetingState.currentMeeting,
-        participants: participants.map(p => ({
-            id: p.id,
-            name: p.name,
-            joinTime: p.joinTime,
-            avatarUrl: p.avatarUrl,
-            source: p.source,
-            email: p.email,
-            lastSeen: p.lastSeen
-        })),
-        lastUpdated: Date.now(),
-        dataSource: hasNetworkData ? (domParticipants > 0 ? 'hybrid' : 'network') : 'dom'
-    };
+    // Update the active session with current participant data
+    activeSession.participants = participants.map(p => ({
+        id: p.id,
+        name: p.name,
+        joinTime: p.joinTime,
+        avatarUrl: p.avatarUrl,
+        source: p.source,
+        email: p.email,
+        lastSeen: p.lastSeen
+    }));
+    activeSession.dataSource = hasNetworkData ? (domParticipants > 0 ? 'hybrid' : 'network') : 'dom';
     
-    // If this is a resumed meeting, remove any previous endTime to make it active again
-    if (currentMeetingState.currentMeeting.resumed) {
-        delete meeting.endTime;
-        console.log(`🔄 Resumed meeting - removed endTime to make it active again`);
-    }
-    
-    await saveMeetingUpdate(meeting);
+    // Note: We don't save the session to storage here - sessions are only saved when they end
+    // This keeps the storage operations minimal and ensures we only store complete session data
 }
 
 // Handle meeting state update from content script
@@ -355,10 +437,16 @@ async function handleMeetingStateUpdate(data, sender) {
 
 // Handle minute data logging from content script
 async function handleMinuteDataLog(minuteData, sender) {
-    console.log(`⏰ Minute ${minuteData.minute}: ${minuteData.participantCount} participants in ${minuteData.meetingId}`);
+    const { minute, meetingId, participantCount, cumulativeDuration, resumed, previousDuration, sessionDuration } = minuteData;
+    
+    if (resumed) {
+        console.log(`⏰ Minute ${minute}: ${participantCount} participants in ${meetingId} (resumed, total: ${Math.round(cumulativeDuration / 60000)}m, session: ${Math.round(sessionDuration / 60000)}m)`);
+    } else {
+        console.log(`⏰ Minute ${minute}: ${participantCount} participants in ${meetingId}`);
+    }
     
     const meetings = await getMeetings();
-    const meetingIndex = meetings.findIndex(m => m.id === minuteData.meetingId);
+    const meetingIndex = meetings.findIndex(m => m.id === meetingId);
     
     if (meetingIndex >= 0) {
         const meeting = meetings[meetingIndex];
@@ -369,14 +457,17 @@ async function handleMinuteDataLog(minuteData, sender) {
         }
         
         // Add or update minute log
-        const existingLogIndex = meeting.minuteLogs.findIndex(log => log.minute === minuteData.minute);
+        const existingLogIndex = meeting.minuteLogs.findIndex(log => log.minute === minute);
         
         const logEntry = {
-            minute: minuteData.minute,
+            minute: minute,
             timestamp: minuteData.timestamp,
             participants: minuteData.participants,
-            participantCount: minuteData.participantCount,
-            cumulativeDuration: minuteData.cumulativeDuration
+            participantCount: participantCount,
+            cumulativeDuration: cumulativeDuration,
+            resumed: resumed || false,
+            previousDuration: previousDuration || 0,
+            sessionDuration: sessionDuration || cumulativeDuration
         };
         
         if (existingLogIndex >= 0) {
@@ -386,17 +477,24 @@ async function handleMinuteDataLog(minuteData, sender) {
         }
         
         // Update meeting's current duration and participant info
-        meeting.currentDuration = minuteData.cumulativeDuration;
+        meeting.currentDuration = cumulativeDuration;
         meeting.lastUpdated = minuteData.timestamp;
         meeting.participants = minuteData.participants;
+        
+        // If this is a resumed meeting, preserve the resume metadata
+        if (resumed) {
+            meeting.resumed = true;
+            meeting.resumedAt = meeting.resumedAt || minuteData.timestamp;
+            meeting.previousDuration = previousDuration;
+        }
         
         // Save updated meeting
         meetings[meetingIndex] = meeting;
         await saveMeetings(meetings);
         
-        console.log(`💾 Minute ${minuteData.minute} data logged for meeting ${minuteData.meetingId}`);
+        console.log(`💾 Minute ${minute} data logged for meeting ${meetingId} (total duration: ${Math.round(cumulativeDuration / 60000)}m)`);
     } else {
-        console.warn(`⚠️ Meeting ${minuteData.meetingId} not found for minute logging`);
+        console.warn(`⚠️ Meeting ${meetingId} not found for minute logging`);
     }
 }
 
@@ -471,6 +569,95 @@ function updateIcon(state, participants, hasNetworkData = false) {
     console.log(`✅ Icon updated: ${title}`);
 }
 
+// SESSION-BASED HELPER FUNCTIONS
+
+// Get recent sessions for a meeting ID
+async function getRecentSessions(meetingId) {
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available for session lookup');
+            return [];
+        }
+        
+        // Use the new session-based storage methods
+        const sessions = await storage.getMeetingSessions(meetingId);
+        
+        // Sort by start time, most recent first
+        return sessions.sort((a, b) => b.startTime - a.startTime);
+        
+    } catch (error) {
+        console.error('❌ Error getting recent sessions:', error);
+        return [];
+    }
+}
+
+// Determine if we should continue a recent session
+function shouldContinueRecentSession(recentSession) {
+    if (!recentSession) return false;
+    
+    // If the session has no end time, it's still ongoing
+    if (!recentSession.endTime) {
+        console.log(`🔄 Session ${recentSession.sessionId} is still ongoing (no endTime)`);
+        return true;
+    }
+    
+    // If it ended recently (within last 5 minutes), continue it
+    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+    if (recentSession.endTime > fiveMinutesAgo) {
+        const gapMinutes = Math.round((Date.now() - recentSession.endTime) / 60000);
+        console.log(`🔄 Session ${recentSession.sessionId} ended recently (${gapMinutes}m ago), continuing`);
+        return true;
+    }
+    
+    // If it ended more than 5 minutes ago, start a new session
+    const gapMinutes = Math.round((Date.now() - recentSession.endTime) / 60000);
+    console.log(`🆕 Session ${recentSession.sessionId} ended ${gapMinutes}m ago, starting new session`);
+    return false;
+}
+
+// End current active session for a meeting
+async function endActiveSession(meetingId, reason = 'meeting_ended') {
+    const sessionId = meetingToSessionMap[meetingId];
+    if (!sessionId) {
+        console.log(`⚠️ No active session found for meeting: ${meetingId}`);
+        return;
+    }
+    
+    const session = activeSessions[sessionId];
+    if (!session) {
+        console.log(`⚠️ Session ${sessionId} not found in active sessions`);
+        return;
+    }
+    
+    const endTime = Date.now();
+    const duration = endTime - session.startTime;
+    
+    console.log(`🚫 Ending session: ${sessionId} for meeting: ${meetingId} (${Math.round(duration / 60000)}m, reason: ${reason})`);
+    
+    // Update session with end time
+    session.endTime = endTime;
+    session.isActive = false;
+    session.endReason = reason;
+    
+    // Save the completed session to storage
+    try {
+        const storage = await ensureStorageManager();
+        if (storage) {
+            await storage.saveMeetingSession(session);
+            console.log(`✅ Session ${sessionId} saved to storage with ${Math.round(duration / 60000)}m duration`);
+        }
+    } catch (error) {
+        console.error('❌ Error saving ended session:', error);
+    }
+    
+    // Clean up active session tracking
+    delete activeSessions[sessionId];
+    delete meetingToSessionMap[meetingId];
+    
+    console.log(`🧹 Cleaned up session tracking for ${sessionId}`);
+}
+
 // Helper function to find existing or recent meeting (for rejoin logic)
 async function findExistingOrRecentMeeting(meetingId) {
     try {
@@ -480,10 +667,27 @@ async function findExistingOrRecentMeeting(meetingId) {
             return null;
         }
         
+        // Validate meetingId
+        if (!meetingId || typeof meetingId !== 'string') {
+            console.warn('⚠️ Invalid meetingId for lookup:', meetingId);
+            return null;
+        }
+        
+        console.log(`🔍 Looking up existing meeting: ${meetingId}`);
+        
         // First, try to get the exact meeting by ID
         const exactMeeting = await storage.getMeeting(meetingId);
         
         if (exactMeeting) {
+            console.log(`📋 Found existing meeting:`, {
+                id: exactMeeting.id,
+                title: exactMeeting.title,
+                startTime: exactMeeting.startTime ? new Date(exactMeeting.startTime).toISOString() : 'null',
+                endTime: exactMeeting.endTime ? new Date(exactMeeting.endTime).toISOString() : 'null',
+                currentDuration: exactMeeting.currentDuration,
+                resumed: exactMeeting.resumed
+            });
+            
             // Check if it's an ongoing meeting (no endTime) - definitely rejoin
             if (!exactMeeting.endTime) {
                 console.log(`🔄 Found ongoing meeting: ${meetingId}`);
@@ -508,7 +712,13 @@ async function findExistingOrRecentMeeting(meetingId) {
         return null;
         
     } catch (error) {
-        console.error('❌ Error finding existing meeting:', error);
+        console.error('❌ Error finding existing meeting:', {
+            meetingId,
+            errorName: error.name,
+            errorMessage: error.message,
+            errorCode: error.code,
+            errorStack: error.stack?.substring(0, 200)
+        });
         return null;
     }
 }
@@ -562,30 +772,80 @@ async function saveMeeting(meeting) {
             return;
         }
         
-        // Validate meeting data before saving
-        if (!meeting || !meeting.id || !meeting.startTime) {
-            console.error('❌ Invalid meeting data:', meeting);
+        // Detailed meeting data validation
+        console.log(`🔍 Validating meeting data:`, {
+            hasId: !!meeting?.id,
+            id: meeting?.id,
+            hasStartTime: !!meeting?.startTime,
+            startTime: meeting?.startTime,
+            isValidStartTime: meeting?.startTime && typeof meeting.startTime === 'number' && meeting.startTime > 0,
+            meetingObject: typeof meeting,
+            keys: meeting ? Object.keys(meeting) : 'no meeting object'
+        });
+        
+        if (!meeting) {
+            console.error('❌ Invalid meeting data: meeting is null or undefined');
             return;
         }
         
-        // Log meeting data for debugging
-        console.log(`💾 Saving meeting to IndexedDB:`, {
-            id: meeting.id,
-            title: meeting.title,
-            startTime: new Date(meeting.startTime).toISOString(),
-            endTime: meeting.endTime ? new Date(meeting.endTime).toISOString() : null,
-            participantCount: meeting.participants ? meeting.participants.length : 0,
-            resumed: meeting.resumed || false
+        if (!meeting.id || typeof meeting.id !== 'string' || meeting.id.trim() === '') {
+            console.error('❌ Invalid meeting data: missing or invalid meeting ID', {
+                id: meeting.id,
+                type: typeof meeting.id,
+                meeting: meeting
+            });
+            return;
+        }
+        
+        if (!meeting.startTime || typeof meeting.startTime !== 'number' || meeting.startTime <= 0) {
+            console.error('❌ Invalid meeting data: missing or invalid start time', {
+                startTime: meeting.startTime,
+                type: typeof meeting.startTime,
+                isNumber: typeof meeting.startTime === 'number',
+                isPositive: meeting.startTime > 0,
+                meeting: meeting
+            });
+            return;
+        }
+        
+        // Additional validation for important fields
+        const validatedMeeting = {
+            ...meeting,
+            id: String(meeting.id).trim(),
+            title: meeting.title || meeting.id,
+            startTime: Number(meeting.startTime),
+            endTime: meeting.endTime ? Number(meeting.endTime) : undefined,
+            participants: Array.isArray(meeting.participants) ? meeting.participants : [],
+            minuteLogs: Array.isArray(meeting.minuteLogs) ? meeting.minuteLogs : []
+        };
+        
+        // Log validated meeting data for debugging
+        console.log(`💾 Saving validated meeting to IndexedDB:`, {
+            id: validatedMeeting.id,
+            title: validatedMeeting.title,
+            startTime: new Date(validatedMeeting.startTime).toISOString(),
+            endTime: validatedMeeting.endTime ? new Date(validatedMeeting.endTime).toISOString() : null,
+            participantCount: validatedMeeting.participants.length,
+            resumed: validatedMeeting.resumed || false,
+            hasMinuteLogs: validatedMeeting.minuteLogs.length > 0
         });
         
-        await storage.saveMeeting(meeting);
-        console.log(`✅ Meeting saved successfully to IndexedDB: ${meeting.id}`);
+        await storage.saveMeeting(validatedMeeting);
+        console.log(`✅ Meeting saved successfully to IndexedDB: ${validatedMeeting.id}`);
     } catch (error) {
         console.error('❌ Error saving meeting to IndexedDB:', {
-            error: error,
-            message: error.message || 'Unknown error',
-            name: error.name || 'Unknown error type',
-            meetingId: meeting?.id || 'Unknown ID'
+            errorName: error.name,
+            errorMessage: error.message,
+            errorCode: error.code,
+            errorStack: error.stack?.substring(0, 300),
+            meetingId: meeting?.id || 'Unknown ID',
+            meetingData: meeting ? {
+                id: meeting.id,
+                startTime: meeting.startTime,
+                title: meeting.title,
+                hasParticipants: !!meeting.participants,
+                participantCount: meeting.participants?.length
+            } : 'No meeting data'
         });
     }
 }

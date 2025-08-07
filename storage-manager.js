@@ -4,52 +4,121 @@
 class MeetingStorageManager {
     constructor() {
         this.dbName = 'MeetingTrackerDB';
-        this.dbVersion = 1;
+        this.dbVersion = 2; // Updated version for new schema
         this.db = null;
     }
 
     // Initialize the database
     async init() {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, this.dbVersion);
-            
-            request.onerror = () => reject(request.error);
-            request.onsuccess = () => {
-                this.db = request.result;
-                resolve();
-            };
-            
-            request.onupgradeneeded = (event) => {
-                const db = event.target.result;
+            try {
+                console.log(`💾 IndexedDB: Opening database "${this.dbName}" version ${this.dbVersion}`);
                 
-                // Create meetings store
-                if (!db.objectStoreNames.contains('meetings')) {
-                    const meetingStore = db.createObjectStore('meetings', { keyPath: 'id' });
-                    meetingStore.createIndex('startTime', 'startTime', { unique: false });
-                    meetingStore.createIndex('endTime', 'endTime', { unique: false });
-                    meetingStore.createIndex('date', 'date', { unique: false });
-                    meetingStore.createIndex('participants', 'participants', { unique: false, multiEntry: true });
+                // Check if IndexedDB is available first
+                if (!self.indexedDB) {
+                    const error = new Error('IndexedDB is not available in this context');
+                    console.error('❌ IndexedDB not available:', error);
+                    reject(error);
+                    return;
                 }
                 
-                // Create participants store for analytics
-                if (!db.objectStoreNames.contains('participants')) {
-                    const participantStore = db.createObjectStore('participants', { keyPath: 'name' });
-                    participantStore.createIndex('meetingCount', 'meetingCount', { unique: false });
-                    participantStore.createIndex('totalTime', 'totalTime', { unique: false });
-                }
+                const request = indexedDB.open(this.dbName, this.dbVersion);
                 
-                // Create meeting minutes store (separate for better performance)
-                if (!db.objectStoreNames.contains('meetingMinutes')) {
-                    const minutesStore = db.createObjectStore('meetingMinutes', { keyPath: ['meetingId', 'timestamp'] });
-                    minutesStore.createIndex('meetingId', 'meetingId', { unique: false });
-                    minutesStore.createIndex('timestamp', 'timestamp', { unique: false });
-                }
+                request.onerror = (event) => {
+                    const error = request.error || event.target?.error || new Error('Unknown IndexedDB error');
+                    console.error('❌ IndexedDB open error:');
+                    console.error('Error name:', error.name || 'Unknown');
+                    console.error('Error message:', error.message || 'No message');
+                    console.error('Error code:', error.code || 'No code');
+                    console.error('Request readyState:', request.readyState);
+                    console.error('Full error:', error);
+                    reject(error);
+                };
                 
-                // Create settings store
-                if (!db.objectStoreNames.contains('settings')) {
-                    db.createObjectStore('settings', { keyPath: 'key' });
-                }
-            };
+                request.onsuccess = (event) => {
+                    try {
+                        this.db = request.result;
+                        console.log(`✅ IndexedDB: Successfully opened database "${this.dbName}"`);
+                        console.log('📋 Available object stores:', Array.from(this.db.objectStoreNames));
+                        resolve();
+                    } catch (successError) {
+                        console.error('❌ IndexedDB success handler error:', successError);
+                        reject(successError);
+                    }
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    try {
+                        console.log('🔄 IndexedDB: Database upgrade needed');
+                        const db = event.target.result;
+                        
+                        console.log('📊 Current version:', event.oldVersion, '-> New version:', event.newVersion);
+                        console.log('📋 Existing stores:', Array.from(db.objectStoreNames));
+                        
+                        // Create meeting sessions store (NEW: session-based model)
+                        if (!db.objectStoreNames.contains('meetingSessions')) {
+                            console.log('🆕 Creating meetingSessions object store...');
+                            const sessionStore = db.createObjectStore('meetingSessions', { keyPath: 'sessionId' });
+                            sessionStore.createIndex('meetingId', 'meetingId', { unique: false });
+                            sessionStore.createIndex('startTime', 'startTime', { unique: false });
+                            sessionStore.createIndex('endTime', 'endTime', { unique: false });
+                            sessionStore.createIndex('date', 'date', { unique: false });
+                            sessionStore.createIndex('participants', 'participants', { unique: false, multiEntry: true });
+                            console.log('✅ Created meetingSessions store with indexes');
+                        }
+                        
+                        // Keep meetings store for backward compatibility but mark as deprecated
+                        if (!db.objectStoreNames.contains('meetings')) {
+                            console.log('📝 Creating meetings object store (deprecated - keeping for compatibility)...');
+                            const meetingStore = db.createObjectStore('meetings', { keyPath: 'id' });
+                            meetingStore.createIndex('startTime', 'startTime', { unique: false });
+                            meetingStore.createIndex('endTime', 'endTime', { unique: false });
+                            meetingStore.createIndex('date', 'date', { unique: false });
+                            meetingStore.createIndex('participants', 'participants', { unique: false, multiEntry: true });
+                            console.log('✅ Created meetings store with indexes (deprecated)');
+                        }
+                        
+                        // Create participants store for analytics
+                        if (!db.objectStoreNames.contains('participants')) {
+                            console.log('👥 Creating participants object store...');
+                            const participantStore = db.createObjectStore('participants', { keyPath: 'name' });
+                            participantStore.createIndex('meetingCount', 'meetingCount', { unique: false });
+                            participantStore.createIndex('totalTime', 'totalTime', { unique: false });
+                            console.log('✅ Created participants store with indexes');
+                        }
+                        
+                        // Create meeting minutes store (separate for better performance)
+                        if (!db.objectStoreNames.contains('meetingMinutes')) {
+                            console.log('⏰ Creating meetingMinutes object store...');
+                            const minutesStore = db.createObjectStore('meetingMinutes', { keyPath: ['meetingId', 'timestamp'] });
+                            minutesStore.createIndex('meetingId', 'meetingId', { unique: false });
+                            minutesStore.createIndex('timestamp', 'timestamp', { unique: false });
+                            console.log('✅ Created meetingMinutes store with indexes');
+                        }
+                        
+                        // Create settings store
+                        if (!db.objectStoreNames.contains('settings')) {
+                            console.log('⚙️ Creating settings object store...');
+                            db.createObjectStore('settings', { keyPath: 'key' });
+                            console.log('✅ Created settings store');
+                        }
+                        
+                        console.log('✅ IndexedDB upgrade completed successfully');
+                        
+                    } catch (upgradeError) {
+                        console.error('❌ IndexedDB upgrade error:', upgradeError);
+                        reject(upgradeError);
+                    }
+                };
+                
+                request.onblocked = (event) => {
+                    console.warn('⚠️ IndexedDB upgrade blocked - another tab may be open');
+                };
+                
+            } catch (initError) {
+                console.error('❌ IndexedDB initialization error:', initError);
+                reject(initError);
+            }
         });
     }
 
@@ -351,12 +420,68 @@ class MeetingStorageManager {
     // Get a single meeting
     async getMeeting(meetingId) {
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['meetings'], 'readonly');
-            const store = transaction.objectStore('meetings');
-            const request = store.get(meetingId);
+            try {
+                // Validate inputs
+                if (!meetingId) {
+                    console.warn('⚠️ getMeeting called with no meetingId');
+                    resolve(null);
+                    return;
+                }
+                
+                if (!this.db) {
+                    console.error('❌ IndexedDB not initialized');
+                    reject(new Error('IndexedDB not initialized'));
+                    return;
+                }
+                
+                console.log(`🔍 IndexedDB: Getting meeting ${meetingId}`);
+                
+                const transaction = this.db.transaction(['meetings'], 'readonly');
+                const store = transaction.objectStore('meetings');
+                const request = store.get(meetingId);
 
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    const result = request.result;
+                    console.log(`📋 IndexedDB: Found meeting ${meetingId}:`, result ? {
+                        id: result.id,
+                        title: result.title,
+                        startTime: result.startTime,
+                        endTime: result.endTime
+                    } : 'null');
+                    resolve(result);
+                };
+                
+                request.onerror = () => {
+                    const error = request.error;
+                    console.error('❌ IndexedDB getMeeting error:', {
+                        meetingId,
+                        errorName: error?.name,
+                        errorMessage: error?.message,
+                        errorCode: error?.code
+                    });
+                    reject(error);
+                };
+                
+                transaction.onerror = () => {
+                    const error = transaction.error;
+                    console.error('❌ IndexedDB transaction error:', {
+                        meetingId,
+                        errorName: error?.name,
+                        errorMessage: error?.message,
+                        errorCode: error?.code
+                    });
+                    reject(error);
+                };
+                
+            } catch (error) {
+                console.error('❌ IndexedDB getMeeting exception:', {
+                    meetingId,
+                    errorName: error.name,
+                    errorMessage: error.message,
+                    errorStack: error.stack?.substring(0, 200)
+                });
+                reject(error);
+            }
         });
     }
 
@@ -397,15 +522,256 @@ class MeetingStorageManager {
         });
     }
 
-    // Clear all data
+    // SESSION-BASED METHODS (NEW APPROACH)
+    
+    // Save a meeting session (each join/leave cycle is a separate session)
+    async saveMeetingSession(session) {
+        return new Promise((resolve, reject) => {
+            try {
+                console.log(`💾 Saving meeting session:`, {
+                    sessionId: session.sessionId,
+                    meetingId: session.meetingId,
+                    startTime: new Date(session.startTime).toISOString(),
+                    endTime: session.endTime ? new Date(session.endTime).toISOString() : 'ongoing',
+                    duration: session.endTime ? Math.round((session.endTime - session.startTime) / 60000) : 'ongoing'
+                });
+                
+                const transaction = this.db.transaction(['meetingSessions', 'meetingMinutes', 'participants'], 'readwrite');
+                const sessionStore = transaction.objectStore('meetingSessions');
+                const minutesStore = transaction.objectStore('meetingMinutes');
+                const participantStore = transaction.objectStore('participants');
+
+                // Optimize session object structure
+                const optimizedSession = {
+                    ...session,
+                    date: new Date(session.startTime).toISOString().split('T')[0],
+                    duration: session.endTime ? (session.endTime - session.startTime) : null,
+                    participantCount: session.participants ? session.participants.length : 0
+                };
+
+                // Remove minutes from main session object to reduce size
+                const { minuteLogs, ...sessionWithoutMinutes } = optimizedSession;
+                
+                // Save session record
+                sessionStore.put(sessionWithoutMinutes);
+
+                // Save session minutes separately
+                if (minuteLogs && minuteLogs.length > 0) {
+                    minuteLogs.forEach(minute => {
+                        minutesStore.put({
+                            meetingId: session.sessionId, // Use sessionId for minutes
+                            timestamp: minute.timestamp,
+                            participants: minute.participants,
+                            sessionId: session.sessionId
+                        });
+                    });
+                }
+
+                // Update participant analytics
+                if (session.participants && Array.isArray(session.participants)) {
+                    session.participants.forEach(async (participant) => {
+                        let participantName = '';
+                        if (typeof participant === 'string') {
+                            participantName = participant;
+                        } else if (participant && typeof participant === 'object') {
+                            participantName = participant.name || participant.displayName || participant.id || 'Unknown';
+                        }
+                        
+                        if (!participantName || participantName === 'Unknown') return;
+                        
+                        try {
+                            const existing = await this.getParticipant(participantName);
+                            const sessionDuration = session.endTime ? (session.endTime - session.startTime) : 0;
+                            
+                            participantStore.put({
+                                name: participantName,
+                                meetingCount: (existing?.meetingCount || 0) + 1,
+                                totalTime: (existing?.totalTime || 0) + sessionDuration,
+                                lastMeeting: session.startTime,
+                                sessions: [...(existing?.sessions || []), session.sessionId]
+                            });
+                        } catch (error) {
+                            console.warn(`⚠️ Error updating participant ${participantName}:`, error);
+                        }
+                    });
+                }
+
+                transaction.oncomplete = () => {
+                    console.log('✅ Meeting session saved to IndexedDB:', session.sessionId);
+                    resolve();
+                };
+                transaction.onerror = () => {
+                    console.error('❌ Error saving session to IndexedDB:', transaction.error);
+                    reject(transaction.error);
+                };
+            } catch (error) {
+                console.error('❌ Error preparing session data:', error);
+                reject(error);
+            }
+        });
+    }
+    
+    // Get all sessions for a specific meeting ID
+    async getMeetingSessions(meetingId) {
+        return new Promise((resolve, reject) => {
+            try {
+                console.log(`🔍 Getting sessions for meeting: ${meetingId}`);
+                
+                const transaction = this.db.transaction(['meetingSessions'], 'readonly');
+                const store = transaction.objectStore('meetingSessions');
+                const index = store.index('meetingId');
+                const request = index.getAll(meetingId);
+
+                request.onsuccess = () => {
+                    const sessions = request.result;
+                    console.log(`📋 Found ${sessions.length} sessions for meeting ${meetingId}`);
+                    
+                    // Sort sessions by start time
+                    sessions.sort((a, b) => a.startTime - b.startTime);
+                    resolve(sessions);
+                };
+                
+                request.onerror = () => {
+                    console.error('❌ Error getting meeting sessions:', request.error);
+                    reject(request.error);
+                };
+            } catch (error) {
+                console.error('❌ Error in getMeetingSessions:', error);
+                reject(error);
+            }
+        });
+    }
+    
+    // Get all sessions (for dashboard display)
+    async getAllSessions(options = {}) {
+        return new Promise((resolve, reject) => {
+            try {
+                const transaction = this.db.transaction(['meetingSessions'], 'readonly');
+                const store = transaction.objectStore('meetingSessions');
+                let request;
+                
+                if (options.dateRange) {
+                    const keyRange = IDBKeyRange.bound(options.dateRange.start, options.dateRange.end);
+                    request = store.index('date').getAll(keyRange);
+                } else {
+                    request = store.getAll();
+                }
+
+                request.onsuccess = () => {
+                    let sessions = request.result;
+                    
+                    // Apply filters
+                    if (options.limit) {
+                        sessions = sessions.slice(0, options.limit);
+                    }
+                    
+                    if (options.sortBy === 'duration') {
+                        sessions.sort((a, b) => (b.duration || 0) - (a.duration || 0));
+                    } else {
+                        // Default sort by start time, newest first
+                        sessions.sort((a, b) => b.startTime - a.startTime);
+                    }
+                    
+                    resolve(sessions);
+                };
+                
+                request.onerror = () => reject(request.error);
+            } catch (error) {
+                console.error('❌ Error in getAllSessions:', error);
+                reject(error);
+            }
+        });
+    }
+    
+    // Get sessions grouped by meeting ID (for aggregated view)
+    async getGroupedMeetingSessions() {
+        try {
+            const sessions = await this.getAllSessions();
+            const grouped = {};
+            
+            sessions.forEach(session => {
+                if (!grouped[session.meetingId]) {
+                    grouped[session.meetingId] = {
+                        meetingId: session.meetingId,
+                        title: session.title,
+                        sessions: [],
+                        totalDuration: 0,
+                        firstStartTime: session.startTime,
+                        lastEndTime: session.endTime
+                    };
+                }
+                
+                grouped[session.meetingId].sessions.push(session);
+                
+                if (session.duration) {
+                    grouped[session.meetingId].totalDuration += session.duration;
+                }
+                
+                // Track earliest start and latest end
+                if (session.startTime < grouped[session.meetingId].firstStartTime) {
+                    grouped[session.meetingId].firstStartTime = session.startTime;
+                }
+                
+                if (session.endTime && (!grouped[session.meetingId].lastEndTime || session.endTime > grouped[session.meetingId].lastEndTime)) {
+                    grouped[session.meetingId].lastEndTime = session.endTime;
+                }
+            });
+            
+            // Sort sessions within each meeting
+            Object.values(grouped).forEach(meeting => {
+                meeting.sessions.sort((a, b) => a.startTime - b.startTime);
+            });
+            
+            return Object.values(grouped);
+        } catch (error) {
+            console.error('❌ Error getting grouped sessions:', error);
+            return [];
+        }
+    }
+    
+    // Delete a specific session
+    async deleteSession(sessionId) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['meetingSessions', 'meetingMinutes'], 'readwrite');
+            
+            // Delete session
+            transaction.objectStore('meetingSessions').delete(sessionId);
+            
+            // Delete associated minutes
+            const minutesStore = transaction.objectStore('meetingMinutes');
+            const request = minutesStore.openCursor();
+            
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    if (cursor.value.sessionId === sessionId) {
+                        cursor.delete();
+                    }
+                    cursor.continue();
+                }
+            };
+
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+        });
+    }
+    
+    // Generate unique session ID
+    generateSessionId() {
+        return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    // Clear all data (updated to include sessions)
     async clearAllData() {
-        const storeNames = ['meetings', 'meetingMinutes', 'participants'];
+        const storeNames = ['meetings', 'meetingSessions', 'meetingMinutes', 'participants'];
         
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(storeNames, 'readwrite');
             
             storeNames.forEach(storeName => {
-                transaction.objectStore(storeName).clear();
+                if (this.db.objectStoreNames.contains(storeName)) {
+                    transaction.objectStore(storeName).clear();
+                }
             });
 
             transaction.oncomplete = () => resolve();
