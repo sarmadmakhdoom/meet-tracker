@@ -862,12 +862,11 @@ class SimpleMeetTracker {
     return name.trim();
   }
 
-  // New method: Check for STRONG evidence that a meeting has ended
-  // This is much more conservative than the old zombie detection
+  // Enhanced method: Check for meeting end evidence with better detection
   hasStrongMeetingEndEvidence() {
-    // Only return true if we have VERY strong evidence the meeting ended
+    console.log('[SimpleMeetTracker] 🔍 Checking for meeting end evidence...');
     
-    // Check for explicit meeting end UI text
+    // LEVEL 1: Explicit meeting end UI text (strongest evidence) - EXPANDED LIST
     const bodyText = document.body.textContent || '';
     const strongEndTexts = [
       'You left the meeting',
@@ -875,34 +874,110 @@ class SimpleMeetTracker {
       'Thanks for joining',
       'Meeting ended',
       'You have left the meeting',
-      'Return to home screen'
+      'Return to home screen',
+      'You left this meeting',
+      'Meeting has ended',
+      'Call ended',
+      'You have been disconnected',
+      'Your call has ended',
+      'The call ended',
+      'Call has ended',
+      'Meeting is over',
+      'This meeting has ended',
+      'You are no longer in the meeting',
+      'Meeting session ended',
+      'Connection ended',
+      'Disconnected from meeting',
+      'Left the call',
+      'Call disconnected'
     ];
     
     for (let text of strongEndTexts) {
       if (bodyText.includes(text)) {
-        console.log(`[SimpleMeetTracker] ✅ Strong end evidence found: "${text}"`);
+        console.log(`[SimpleMeetTracker] ✅ STRONG end evidence found: "${text}"`);
         return true;
       }
     }
     
-    // Check for explicit rejoin or return buttons (strong indicators)
-    const rejoinButton = document.querySelector('button[aria-label*="Rejoin"], button[aria-label*="Join again"]');
-    const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"], a[href="/"]');
+    // LEVEL 2: Explicit post-meeting buttons (strong indicators) - EXPANDED
+    // Note: querySelector does NOT support :contains, so do text-based detection
+    const rejoinButton = document.querySelector('button[aria-label*="Rejoin"], button[aria-label*="Join again"]') ||
+      Array.from(document.querySelectorAll('button')).find(b => /\b(rejoin|join again)\b/i.test(b.textContent || '')) || null;
+    const returnHomeButton = document.querySelector('a[href*="https://meet.google.com"], a[href="/"], a[href*="meet.google.com"]');
+    const newMeetingButton = document.querySelector('button[aria-label*="New meeting"]') ||
+      Array.from(document.querySelectorAll('button')).find(b => /\bnew\s+meeting\b/i.test(b.textContent || '')) || null;
     
-    if (rejoinButton || returnHomeButton) {
-      console.log(`[SimpleMeetTracker] ✅ Strong end evidence: Post-meeting buttons found (Rejoin: ${!!rejoinButton}, Home: ${!!returnHomeButton})`);
+    if (rejoinButton || returnHomeButton || newMeetingButton) {
+      console.log(`[SimpleMeetTracker] ✅ STRONG end evidence: Post-meeting buttons found (Rejoin: ${!!rejoinButton}, Home: ${!!returnHomeButton}, New: ${!!newMeetingButton})`);
       return true;
     }
     
-    // If we're on a different URL pattern that indicates meeting ended
+    // LEVEL 3: URL patterns that indicate meeting ended - EXPANDED
     const currentUrl = window.location.href;
-    if (currentUrl.includes('/landing/') || currentUrl.includes('/ended/') || currentUrl.includes('/thankyou/')) {
-      console.log(`[SimpleMeetTracker] ✅ Strong end evidence: On post-meeting URL: ${currentUrl}`);
+    if (currentUrl.includes('/landing/') || currentUrl.includes('/ended/') || currentUrl.includes('/thankyou/') || 
+        currentUrl.includes('/goodbye/') || currentUrl.includes('/complete/') || currentUrl === 'https://meet.google.com/') {
+      console.log(`[SimpleMeetTracker] ✅ STRONG end evidence: On post-meeting URL: ${currentUrl}`);
       return true;
     }
     
-    // NO strong evidence found - keep meeting active
-    console.log(`[SimpleMeetTracker] ❌ No strong end evidence found - meeting should remain active`);
+    // LEVEL 4: Check for absence of "Leave call" button (most reliable indicator)
+    // If we're on a meeting URL but there's no "Leave call" button, meeting likely ended
+    const currentPath = window.location.pathname;
+    const isMeetingUrlPattern = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/.test(currentPath) || currentPath.length > 10;
+    const leaveCallButton = document.querySelector('[aria-label*="Leave call"], [aria-label*="End call"], [aria-label*="Hang up"]');
+    
+    if (isMeetingUrlPattern && !leaveCallButton) {
+      // Double-check we're not in a waiting room or pre-meeting state
+      const joinButton = document.querySelector('[aria-label*="Join"], [aria-label*="Ask to join"]');
+      const waitingText = bodyText.includes('Join now') || bodyText.includes('Ask to join') || bodyText.includes('Waiting to join');
+      
+      if (!joinButton && !waitingText) {
+        console.log(`[SimpleMeetTracker] ✅ STRONG end evidence: On meeting URL (${currentPath}) but no Leave call button and not in waiting room`);
+        return true;
+      }
+    }
+    
+    // LEVEL 5: Check if we can't find ANY meeting controls AND no participants for shorter period
+    const hasMeetingControls = this.hasMeetingControls();
+    const hasParticipants = this.participants.size > 0;
+    const hasRetainedParticipants = this.getRetainedParticipants().size > 0;
+    const now = Date.now();
+    
+    // Track when we last had clear meeting activity
+    if (hasMeetingControls || hasParticipants) {
+      this.lastClearMeetingActivity = now;
+    }
+    
+    // REDUCED THRESHOLD: If we haven't had clear meeting activity for 1+ minute, consider it ended
+    // This is more responsive than the previous 2-minute threshold
+    const timeSinceLastActivity = this.lastClearMeetingActivity ? (now - this.lastClearMeetingActivity) : 0;
+    const inactiveThreshold = 1 * 60 * 1000; // 1 minute (reduced from 2)
+    
+    if (!hasMeetingControls && !hasParticipants && !hasRetainedParticipants && timeSinceLastActivity > inactiveThreshold) {
+      console.log(`[SimpleMeetTracker] ✅ MODERATE end evidence: No meeting activity for ${Math.round(timeSinceLastActivity / 60000)} minutes`);
+      return true;
+    }
+    
+    // LEVEL 6: Additional fallback checks for common meeting end scenarios
+    // Check if page title changed to indicate meeting ended
+    const pageTitle = document.title || '';
+    if (pageTitle.includes('Meet') && !pageTitle.includes('Google Meet') && pageTitle.toLowerCase().includes('end')) {
+      console.log(`[SimpleMeetTracker] ✅ MODERATE end evidence: Page title suggests meeting ended: "${pageTitle}"`);
+      return true;
+    }
+    
+    // Check for specific post-meeting UI elements
+    const feedbackButton = document.querySelector('button[aria-label*="feedback" ]') ||
+      Array.from(document.querySelectorAll('button')).find(b => /\bgive\s+feedback\b/i.test(b.textContent || '')) || null;
+    const ratingStars = document.querySelectorAll('[aria-label*="star"], [aria-label*="rating"]');
+    
+    if (feedbackButton || ratingStars.length > 0) {
+      console.log(`[SimpleMeetTracker] ✅ MODERATE end evidence: Post-meeting feedback UI found`);
+      return true;
+    }
+    
+    // No clear evidence of meeting end
+    console.log(`[SimpleMeetTracker] ❌ No clear end evidence - meeting should remain active (controls: ${hasMeetingControls}, participants: ${hasParticipants}, retained: ${hasRetainedParticipants}, inactive: ${Math.round(timeSinceLastActivity / 60000)}m, leaveButton: ${!!leaveCallButton})`);
     return false;
   }
   
