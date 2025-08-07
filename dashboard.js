@@ -10,10 +10,51 @@ let currentPage = 1;
 let pageSize = 20;
 let totalPages = 1;
 
+// Auto-refresh timer for active sessions
+let refreshTimer = null;
+
 document.addEventListener('DOMContentLoaded', () => {
     initializeDashboard();
     setupTooltipPositioning();
+    
+    // Start periodic refresh if we have active sessions
+    startPeriodicRefresh();
 });
+
+// Periodic refresh for live data updates
+function startPeriodicRefresh() {
+    // Clear any existing timer
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+    }
+    
+    // Check if we have active sessions
+    const hasActiveSessions = allMeetings.some(m => m.isActive === true);
+    
+    if (hasActiveSessions) {
+        console.log('🔄 Starting periodic refresh for active sessions');
+        // Refresh every 30 seconds when there are active sessions
+        refreshTimer = setInterval(async () => {
+            try {
+                await loadMeetings();
+                applyFilters();
+                console.log('🔄 Refreshed dashboard data');
+            } catch (error) {
+                console.error('❌ Error during periodic refresh:', error);
+            }
+        }, 30000); // 30 seconds
+    } else {
+        console.log('⏸️ No active sessions, stopping periodic refresh');
+    }
+}
+
+function stopPeriodicRefresh() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+        console.log('⏹️ Stopped periodic refresh');
+    }
+}
 
 async function initializeDashboard() {
     try {
@@ -325,6 +366,9 @@ function updateDashboard() {
     updateRecentMeetings();
     updateMeetingsTable();
     updateDetailedStats();
+    
+    // Restart periodic refresh if needed
+    startPeriodicRefresh();
 }
 
 function updateSummaryStats() {
@@ -1007,10 +1051,21 @@ function updateMeetingsTable() {
         currentPage = 1;
     }
     
-    countEl.textContent = `${filteredMeetings.length} meetings`;
+    // Count active vs completed sessions
+    const activeSessions = filteredMeetings.filter(m => m.isActive === true).length;
+    const completedSessions = filteredMeetings.length - activeSessions;
     
-    // Get sorted meetings for current page
-    const sorted = [...filteredMeetings].sort((a, b) => b.startTime - a.startTime);
+    countEl.textContent = `${filteredMeetings.length} sessions (${activeSessions} active, ${completedSessions} completed)`;
+    
+    // Get sorted meetings for current page - active sessions first
+    const sorted = [...filteredMeetings].sort((a, b) => {
+        // Active sessions first
+        if (a.isActive !== b.isActive) {
+            return b.isActive - a.isActive;
+        }
+        // Then by start time (newest first)
+        return b.startTime - a.startTime;
+    });
     const startIndex = (currentPage - 1) * pageSize;
     const endIndex = startIndex + pageSize;
     const paginatedMeetings = sorted.slice(startIndex, endIndex);
@@ -1019,15 +1074,25 @@ function updateMeetingsTable() {
     tbody.innerHTML = paginatedMeetings.map((m, index) => {
         // Calculate real-time duration for ongoing meetings in table
         let duration;
-        if (m.endTime) {
+        let statusIndicator = '';
+        
+        if (m.isActive) {
+            // Active session - show current duration
+            duration = formatDuration(m.duration) + ' (ongoing)';
+            statusIndicator = '<span class="status-active" title="Session in progress">🔴 LIVE</span> ';
+        } else if (m.endTime) {
             duration = formatDuration(m.endTime - m.startTime);
+            statusIndicator = '<span class="status-completed" title="Session completed">✅</span> ';
         } else if (m.currentDuration) {
             // Use currentDuration from minute logs
             duration = formatDuration(m.currentDuration) + ' (ongoing)';
+            statusIndicator = '<span class="status-active" title="Session in progress">🔴 LIVE</span> ';
         } else {
             // Fallback: calculate from start time
             duration = formatDuration(Date.now() - m.startTime) + ' (ongoing)';
+            statusIndicator = '<span class="status-active" title="Session in progress">🔴 LIVE</span> ';
         }
+        
         const efficiency = calculateEfficiencyScore(m);
         
         // Handle participant display with proper name extraction
@@ -1047,19 +1112,19 @@ function updateMeetingsTable() {
         }
         
         const participants = participantNames.slice(0, 3).join(', ') + (participantNames.length > 3 ? ` (+${participantNames.length - 3})` : '');
-        const title = m.title || `Meeting ${m.id}`;
+        const title = m.title || `Meeting ${m.meetingId || m.id}`;
         const shortTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
         
         return `
-            <tr>
-                <td>${new Date(m.startTime).toLocaleString()}</td>
+            <tr class="${m.isActive ? 'active-session' : 'completed-session'}">
+                <td>${statusIndicator}${new Date(m.startTime).toLocaleString()}</td>
                 <td class="meeting-title" title="${escapeHtml(title)}">${escapeHtml(shortTitle)}</td>
                 <td>${duration}</td>
                 <td class="meeting-participants" title="${escapeHtml(participantNames.join(', '))}">${escapeHtml(participants)}</td>
                 <td>${efficiency}</td>
                 <td>
                     <button class="view-details" data-meeting-id="${m.id}">Details</button>
-                    <button class="delete-meeting" data-meeting-id="${m.id}" title="Delete this meeting">🗑️</button>
+                    ${!m.isActive ? `<button class="delete-meeting" data-meeting-id="${m.id}" title="Delete this meeting">🗑️</button>` : ''}
                 </td>
             </tr>
         `;

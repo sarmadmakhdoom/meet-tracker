@@ -1308,3 +1308,57 @@ button {
         padding: 0.2rem 0.4rem;
     }
 }
+
+/* Active Session Indicators */
+.status-active {
+    color: #ea4335;
+    font-weight: bold;
+    font-size: 0.8rem;
+    animation: pulse 2s infinite;
+}
+
+.status-completed {
+    color: #34a853;
+    font-size: 0.8rem;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Session-based table row styling */
+.active-session {
+    background: rgba(234, 67, 53, 0.05);
+    border-left: 3px solid #ea4335;
+}
+
+.active-session:hover {
+    background: rgba(234, 67, 53, 0.1);
+}
+
+.completed-session {
+    background: #1f1f1f;
+}
+
+.completed-session:hover {
+    background: #2d2d2d;
+}
+
+/* Session ID styling */
+.session-id code {
+    background: #333;
+    color: #1a73e8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    border: 1px solid #555;
+}

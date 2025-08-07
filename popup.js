@@ -65,20 +65,27 @@ function getCurrentMeetingState() {
                 return;
             }
             
-            // First try to get state from background script
-            chrome.runtime.sendMessage({ action: 'getCurrentState' }, (state) => {
+            // Use the new session-based data from background
+            chrome.runtime.sendMessage({ action: 'getActiveSession' }, (response) => {
                 if (chrome.runtime.lastError) {
                     console.log('Extension context invalidated:', chrome.runtime.lastError.message);
                     resolve({ state: 'none', participants: [], currentMeeting: null });
                     return;
                 }
                 
-                if (state && state.state !== 'none') {
-                    resolve(state);
+                if (response && response.state === 'active') {
+                    // Use session-based data directly
+                    resolve(response);
+                    console.log('🕐 Using session-based meeting data for popup:', {
+                        meetingId: response.currentMeeting?.id,
+                        sessionId: response.currentMeeting?.sessionId,
+                        sessionDuration: Math.round((response.currentMeeting?.duration || 0) / 60000),
+                        participantCount: response.participants?.length || 0
+                    });
                     return;
                 }
                 
-                // If not in meeting according to background, check active tab
+                // Fallback to checking active tab if no session data
                 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
                     if (chrome.runtime.lastError) {
                         resolve({ state: 'none', participants: [], currentMeeting: null });
@@ -162,15 +169,29 @@ function updateCurrentMeetingInfo(meeting, participants) {
     
     if (meeting && meeting.startTime) {
         const startTime = new Date(meeting.startTime);
-        const now = new Date();
-        const durationMs = now - startTime;
         
-        console.log('Duration calculation:', {
-            startTime: startTime.toISOString(),
-            now: now.toISOString(),
-            durationMs,
-            durationMinutes: Math.floor(durationMs / (1000 * 60))
-        });
+        // Use session-based duration if available, otherwise calculate from start time
+        let durationMs;
+        if (meeting.isSession && meeting.duration) {
+            // Use the precise session duration from the background
+            durationMs = meeting.duration;
+            console.log('📅 Using session-based duration:', {
+                sessionId: meeting.sessionId,
+                sessionStartTime: startTime.toISOString(),
+                sessionDurationMs: durationMs,
+                sessionDurationMinutes: Math.round(durationMs / 60000)
+            });
+        } else {
+            // Fallback to calculating from start time
+            const now = new Date();
+            durationMs = now - startTime;
+            console.log('📅 Calculating duration from start time:', {
+                startTime: startTime.toISOString(),
+                now: now.toISOString(),
+                durationMs,
+                durationMinutes: Math.floor(durationMs / (1000 * 60))
+            });
+        }
         
         startElement.textContent = startTime.toLocaleTimeString();
         durationElement.textContent = formatDuration(durationMs);

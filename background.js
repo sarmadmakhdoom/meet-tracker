@@ -141,10 +141,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     break;
                     
                 case 'getMeetings':
-                    console.log('📥 Background: Getting meetings from storage...');
-                    const meetings = await getMeetings();
-                    console.log(`📤 Background: Sending ${meetings.length} meetings to dashboard`);
-                    sendResponse(meetings);
+                    console.log('📥 Background: Getting sessions from storage for dashboard...');
+                    const sessions = await getSessions();
+                    console.log(`📤 Background: Sending ${sessions.length} sessions to dashboard`);
+                    sendResponse(sessions);
                     break;
                     
                 case 'getCurrentState':
@@ -174,13 +174,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse(forceEndResult);
                     break;
                     
-                case 'getRealTimeState':
-                    sendResponse({
-                        currentMeeting: currentMeetingState.currentMeeting,
-                        state: currentMeetingState.state,
-                        participants: currentMeetingState.participants,
-                        lastUpdate: Date.now()
-                    });
+                // getRealTimeState removed - replaced by getActiveSession
+                    
+                case 'getActiveSession':
+                    const activeSessionData = await getActiveSessionData();
+                    sendResponse(activeSessionData);
                     break;
                     
                 case 'meetingEndedByNavigation':
@@ -304,57 +302,36 @@ async function handleParticipantsUpdate(data, sender) {
     let activeSession = currentSessionId ? activeSessions[currentSessionId] : null;
     
     if (!activeSession) {
-        // Check if we should continue an existing session or start a new one
-        const recentSessions = await getRecentSessions(meetingId);
-        const shouldContinueSession = recentSessions.length > 0 && shouldContinueRecentSession(recentSessions[0]);
+        // ALWAYS create a new session for each join - no continuation logic
+        const sessionId = storageManager ? storageManager.generateSessionId() : `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const startTime = Date.now();
         
-        if (shouldContinueSession) {
-            // Continue the most recent session
-            const recentSession = recentSessions[0];
-            console.log(`🔄 Continuing recent session for meeting: ${meetingId} (session: ${recentSession.sessionId})`);
-            
-            activeSession = {
-                sessionId: recentSession.sessionId,
-                meetingId: meetingId,
-                title: meetingTitle || recentSession.title || meetingId,
-                participants: participants,
-                startTime: recentSession.startTime, // Keep original session start time
-                continuedAt: Date.now(), // Track when we continued this session
-                endTime: null, // Remove any previous end time
-                isActive: true,
-                minuteLogs: recentSession.minuteLogs || [],
-                url: sender.tab?.url,
-                dataSource: networkParticipants > 0 ? 'network' : 'dom'
-            };
-            
-            activeSessions[recentSession.sessionId] = activeSession;
-            meetingToSessionMap[meetingId] = recentSession.sessionId;
-            
-            console.log(`🔄 Continued session ${recentSession.sessionId} for meeting ${meetingId}`);
-        } else {
-            // Start a completely new session
-            const sessionId = storageManager ? storageManager.generateSessionId() : `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            const startTime = Date.now();
-            
-            console.log(`🚀 Starting new session for meeting: ${meetingId} (session: ${sessionId})`);
-            
-            activeSession = {
-                sessionId: sessionId,
-                meetingId: meetingId,
-                title: meetingTitle || meetingId,
-                participants: participants,
-                startTime: startTime,
-                endTime: null,
-                isActive: true,
-                minuteLogs: [],
-                url: sender.tab?.url,
-                dataSource: networkParticipants > 0 ? 'network' : 'dom'
-            };
-            
-            activeSessions[sessionId] = activeSession;
-            meetingToSessionMap[meetingId] = sessionId;
-            
-            console.log(`🚀 Started new session ${sessionId} for meeting ${meetingId}`);
+        console.log(`🚀 Starting NEW session for meeting: ${meetingId} (session: ${sessionId})`);
+        
+        activeSession = {
+            sessionId: sessionId,
+            meetingId: meetingId,
+            title: meetingTitle || meetingId,
+            participants: participants,
+            startTime: startTime,
+            endTime: null,
+            isActive: true,
+            minuteLogs: [],
+            url: sender.tab?.url,
+            dataSource: networkParticipants > 0 ? 'network' : 'dom'
+        };
+        
+        activeSessions[sessionId] = activeSession;
+        meetingToSessionMap[meetingId] = sessionId;
+        
+        console.log(`🚀 Created new session ${sessionId} for meeting ${meetingId}`);
+        
+        // Log previous sessions for debugging
+        try {
+            const previousSessions = await getRecentSessions(meetingId);
+            console.log(`📋 Meeting ${meetingId} now has ${previousSessions.length + 1} total sessions (including this new one)`);
+        } catch (error) {
+            console.log('Could not check previous sessions:', error.message);
         }
         
         // Update current meeting state to track this session
@@ -435,67 +412,53 @@ async function handleMeetingStateUpdate(data, sender) {
     }
 }
 
-// Handle minute data logging from content script
+// Handle minute data logging from content script (SESSION-BASED APPROACH)
 async function handleMinuteDataLog(minuteData, sender) {
     const { minute, meetingId, participantCount, cumulativeDuration, resumed, previousDuration, sessionDuration } = minuteData;
     
-    if (resumed) {
-        console.log(`⏰ Minute ${minute}: ${participantCount} participants in ${meetingId} (resumed, total: ${Math.round(cumulativeDuration / 60000)}m, session: ${Math.round(sessionDuration / 60000)}m)`);
-    } else {
-        console.log(`⏰ Minute ${minute}: ${participantCount} participants in ${meetingId}`);
+    // Get the active session for this meeting
+    const sessionId = meetingToSessionMap[meetingId];
+    const activeSession = sessionId ? activeSessions[sessionId] : null;
+    
+    if (!activeSession) {
+        console.warn(`⚠️ No active session found for meeting ${meetingId}, ignoring minute data`);
+        return;
     }
     
-    const meetings = await getMeetings();
-    const meetingIndex = meetings.findIndex(m => m.id === meetingId);
+    const currentSessionDuration = Date.now() - activeSession.startTime;
     
-    if (meetingIndex >= 0) {
-        const meeting = meetings[meetingIndex];
-        
-        // Initialize minute logs if not exists
-        if (!meeting.minuteLogs) {
-            meeting.minuteLogs = [];
-        }
-        
-        // Add or update minute log
-        const existingLogIndex = meeting.minuteLogs.findIndex(log => log.minute === minute);
-        
-        const logEntry = {
-            minute: minute,
-            timestamp: minuteData.timestamp,
-            participants: minuteData.participants,
-            participantCount: participantCount,
-            cumulativeDuration: cumulativeDuration,
-            resumed: resumed || false,
-            previousDuration: previousDuration || 0,
-            sessionDuration: sessionDuration || cumulativeDuration
-        };
-        
-        if (existingLogIndex >= 0) {
-            meeting.minuteLogs[existingLogIndex] = logEntry;
-        } else {
-            meeting.minuteLogs.push(logEntry);
-        }
-        
-        // Update meeting's current duration and participant info
-        meeting.currentDuration = cumulativeDuration;
-        meeting.lastUpdated = minuteData.timestamp;
-        meeting.participants = minuteData.participants;
-        
-        // If this is a resumed meeting, preserve the resume metadata
-        if (resumed) {
-            meeting.resumed = true;
-            meeting.resumedAt = meeting.resumedAt || minuteData.timestamp;
-            meeting.previousDuration = previousDuration;
-        }
-        
-        // Save updated meeting
-        meetings[meetingIndex] = meeting;
-        await saveMeetings(meetings);
-        
-        console.log(`💾 Minute ${minute} data logged for meeting ${meetingId} (total duration: ${Math.round(cumulativeDuration / 60000)}m)`);
-    } else {
-        console.warn(`⚠️ Meeting ${meetingId} not found for minute logging`);
+    console.log(`⏰ Minute ${minute}: ${participantCount} participants in ${meetingId} (session: ${activeSession.sessionId}, duration: ${Math.round(currentSessionDuration / 60000)}m)`);
+    
+    // Add minute log to the active session (in memory)
+    if (!activeSession.minuteLogs) {
+        activeSession.minuteLogs = [];
     }
+    
+    const logEntry = {
+        minute: minute,
+        timestamp: minuteData.timestamp,
+        participants: minuteData.participants,
+        participantCount: participantCount,
+        sessionDuration: currentSessionDuration, // Use actual session duration
+        sessionId: activeSession.sessionId
+    };
+    
+    // Update or add the minute log
+    const existingLogIndex = activeSession.minuteLogs.findIndex(log => log.minute === minute);
+    if (existingLogIndex >= 0) {
+        activeSession.minuteLogs[existingLogIndex] = logEntry;
+    } else {
+        activeSession.minuteLogs.push(logEntry);
+    }
+    
+    // Update session's current participant info
+    activeSession.participants = minuteData.participants;
+    activeSession.lastUpdated = minuteData.timestamp;
+    
+    console.log(`📝 Minute ${minute} logged for session ${activeSession.sessionId} (session duration: ${Math.round(currentSessionDuration / 60000)}m)`);
+    
+    // Note: Session data is only saved to storage when the session ends
+    // This keeps the system performant and ensures we only store complete session data
 }
 
 // Enhanced icon update with network participant count
@@ -569,9 +532,64 @@ function updateIcon(state, participants, hasNetworkData = false) {
     console.log(`✅ Icon updated: ${title}`);
 }
 
+// Get active session data for popup
+async function getActiveSessionData() {
+    try {
+        // Check if we have any active session
+        if (currentMeetingState.state !== 'active' || !currentMeetingState.currentMeeting) {
+            return {
+                state: 'none',
+                participants: [],
+                currentMeeting: null
+            };
+        }
+        
+        const meetingId = currentMeetingState.currentMeeting.id;
+        const sessionId = meetingToSessionMap[meetingId];
+        const activeSession = sessionId ? activeSessions[sessionId] : null;
+        
+        if (!activeSession) {
+            console.warn(`⚠️ No active session found for meeting ${meetingId}`);
+            return {
+                state: 'none',
+                participants: [],
+                currentMeeting: null
+            };
+        }
+        
+        // Calculate current session duration
+        const currentSessionDuration = Date.now() - activeSession.startTime;
+        
+        // Return session-based data formatted for popup
+        return {
+            state: 'active',
+            participants: currentMeetingState.participants || activeSession.participants,
+            currentMeeting: {
+                id: activeSession.meetingId,
+                title: activeSession.title,
+                startTime: activeSession.startTime, // Use session start time!
+                sessionId: activeSession.sessionId,
+                url: activeSession.url,
+                duration: currentSessionDuration,
+                isSession: true // Flag to indicate this is session-based data
+            },
+            networkParticipants: currentMeetingState.networkParticipants,
+            avatarCount: currentMeetingState.avatarCount
+        };
+        
+    } catch (error) {
+        console.error('❌ Error getting active session data:', error);
+        return {
+            state: 'none',
+            participants: [],
+            currentMeeting: null
+        };
+    }
+}
+
 // SESSION-BASED HELPER FUNCTIONS
 
-// Get recent sessions for a meeting ID
+// Get recent sessions for a meeting ID (used for debugging/logging)
 async function getRecentSessions(meetingId) {
     try {
         const storage = await ensureStorageManager();
@@ -590,30 +608,6 @@ async function getRecentSessions(meetingId) {
         console.error('❌ Error getting recent sessions:', error);
         return [];
     }
-}
-
-// Determine if we should continue a recent session
-function shouldContinueRecentSession(recentSession) {
-    if (!recentSession) return false;
-    
-    // If the session has no end time, it's still ongoing
-    if (!recentSession.endTime) {
-        console.log(`🔄 Session ${recentSession.sessionId} is still ongoing (no endTime)`);
-        return true;
-    }
-    
-    // If it ended recently (within last 5 minutes), continue it
-    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-    if (recentSession.endTime > fiveMinutesAgo) {
-        const gapMinutes = Math.round((Date.now() - recentSession.endTime) / 60000);
-        console.log(`🔄 Session ${recentSession.sessionId} ended recently (${gapMinutes}m ago), continuing`);
-        return true;
-    }
-    
-    // If it ended more than 5 minutes ago, start a new session
-    const gapMinutes = Math.round((Date.now() - recentSession.endTime) / 60000);
-    console.log(`🆕 Session ${recentSession.sessionId} ended ${gapMinutes}m ago, starting new session`);
-    return false;
 }
 
 // End current active session for a meeting
@@ -741,6 +735,73 @@ async function getMeetings() {
         return await storage.getMeetings();
     } catch (error) {
         console.error('❌ Error getting meetings from IndexedDB:', error);
+        return [];
+    }
+}
+
+// Get sessions for dashboard display
+async function getSessions() {
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, returning empty array');
+            return [];
+        }
+        
+        // Get all completed sessions from storage
+        const completedSessions = await storage.getAllSessions();
+        
+        // Get active sessions from memory
+        const activeSessionsList = Object.values(activeSessions).filter(session => session.isActive);
+        
+        console.log(`📊 Found ${completedSessions.length} completed sessions and ${activeSessionsList.length} active sessions`);
+        
+        // Convert completed sessions format
+        const formattedCompletedSessions = completedSessions.map(session => {
+            const duration = session.endTime ? (session.endTime - session.startTime) : 0;
+            
+            return {
+                id: session.sessionId,
+                meetingId: session.meetingId,
+                title: session.title || session.meetingId,
+                startTime: session.startTime,
+                endTime: session.endTime || null,
+                duration: duration,
+                participants: session.participants || [],
+                url: session.url,
+                sessionId: session.sessionId,
+                isSession: true,
+                isActive: false // Mark as completed
+            };
+        });
+        
+        // Convert active sessions format
+        const formattedActiveSessions = activeSessionsList.map(session => {
+            const currentDuration = Date.now() - session.startTime;
+            
+            return {
+                id: session.sessionId,
+                meetingId: session.meetingId,
+                title: session.title || session.meetingId,
+                startTime: session.startTime,
+                endTime: null, // No end time for active sessions
+                duration: currentDuration, // Current duration so far
+                participants: session.participants || [],
+                url: session.url,
+                sessionId: session.sessionId,
+                isSession: true,
+                isActive: true, // Mark as currently active
+                dataSource: session.dataSource || 'unknown'
+            };
+        });
+        
+        // Combine active and completed sessions, with active sessions first
+        const allSessions = [...formattedActiveSessions, ...formattedCompletedSessions];
+        
+        console.log(`📊 Retrieved ${allSessions.length} total sessions for dashboard (${formattedActiveSessions.length} active, ${formattedCompletedSessions.length} completed)`);
+        return allSessions;
+    } catch (error) {
+        console.error('❌ Error getting sessions from IndexedDB:', error);
         return [];
     }
 }
@@ -1304,26 +1365,16 @@ async function detectAndCleanupZombieMeetings() {
     }
 }
 
-// Handle meeting ended by navigation (URL change)
+// Handle meeting ended by navigation (URL change) - SESSION-BASED APPROACH
 async function handleMeetingEndedByNavigation(meetingId, reason, sender) {
     console.log(`🔀 Meeting ended by navigation: ${meetingId} (reason: ${reason})`);
     
-    // Check if this matches our current meeting
+    // End the active session for this meeting
+    await endActiveSession(meetingId, `navigation_${reason}`);
+    
+    // Check if this matches our current meeting state and reset it
     if (currentMeetingState.currentMeeting && currentMeetingState.currentMeeting.id === meetingId) {
-        const endTime = Date.now();
-        const finalMeeting = {
-            ...currentMeetingState.currentMeeting,
-            endTime,
-            participants: currentMeetingState.participants,
-            navigationEnded: true,
-            reason: reason
-        };
-        
-        // Save the meeting
-        await saveMeeting(finalMeeting);
-        
-        const duration = endTime - finalMeeting.startTime;
-        console.log(`🔧 Meeting ended by navigation after ${Math.round(duration / 60000)} minutes (reason: ${reason})`);
+        console.log(`🔧 Meeting session ended by navigation (reason: ${reason})`);
         
         // Reset state
         currentMeetingState = {
@@ -1340,27 +1391,20 @@ async function handleMeetingEndedByNavigation(meetingId, reason, sender) {
     }
 }
 
-// Helper function to end zombie meetings
+// Helper function to end zombie meetings (SESSION-BASED APPROACH)
 async function endZombieMeeting(reason) {
     if (!currentMeetingState.currentMeeting) {
         console.log('⚠️ No current meeting to end');
         return;
     }
     
-    const endTime = Date.now();
-    const finalMeeting = {
-        ...currentMeetingState.currentMeeting,
-        endTime,
-        participants: currentMeetingState.participants,
-        autoEnded: true,
-        reason: reason
-    };
+    const meetingId = currentMeetingState.currentMeeting.id;
     
-    // Save the meeting
-    await saveMeeting(finalMeeting);
+    // End the active session using the session-based approach
+    await endActiveSession(meetingId, `zombie_${reason}`);
     
-    const duration = endTime - finalMeeting.startTime;
-    console.log(`🔧 Auto-ended zombie meeting "${finalMeeting.title}" after ${Math.round(duration / 60000)} minutes (reason: ${reason})`);
+    const duration = Date.now() - currentMeetingState.currentMeeting.startTime;
+    console.log(`🔧 Auto-ended zombie meeting "${currentMeetingState.currentMeeting.title}" after ${Math.round(duration / 60000)} minutes (reason: ${reason})`);
     
     // Reset state
     currentMeetingState = {

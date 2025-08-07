@@ -225,60 +225,25 @@ class SimpleMeetTracker {
     const isActive = this.participants.size > 0 || this.hasMeetingControls();
 
     if (isActive && !this.meetingState.isActive) {
-      // Meeting started - check if this is a resumption
+      // Meeting started - let the session-based background handle the logic
       const startTime = Date.now();
       
-      // Check if background script has resume data for this meeting
-      chrome.runtime.sendMessage({
-        type: 'getRealTimeState'
-      }, (response) => {
-        const currentTime = Date.now();
-        
-        // Check if background script has a resumed meeting with the same ID
-        if (response && response.currentMeeting && 
-            response.currentMeeting.id === meetingId && 
-            response.currentMeeting.resumed) {
-          
-          // This is a resumed meeting - use the original startTime and add previous duration
-          const originalStartTime = response.currentMeeting.startTime;
-          const previousDuration = response.currentMeeting.previousDuration || 0;
-          const resumedAt = response.currentMeeting.resumedAt || currentTime;
-          
-          console.log(`[SimpleMeetTracker] Resuming meeting: ${meetingId}`);
-          console.log(`[SimpleMeetTracker] Original start time: ${new Date(originalStartTime).toLocaleTimeString()}`);
-          console.log(`[SimpleMeetTracker] Previous duration: ${Math.round(previousDuration / 60000)} minutes`);
-          console.log(`[SimpleMeetTracker] Resumed at: ${new Date(resumedAt).toLocaleTimeString()}`);
-          
-          this.meetingState = {
-            isActive: true,
-            meetingId,
-            startTime: originalStartTime, // Use original start time!
-            previousDuration: previousDuration,
-            resumedAt: resumedAt,
-            meetingTitle: this.getMeetingTitle() || response.currentMeeting.title,
-            resumed: true
-          };
-          
-          console.log(`[SimpleMeetTracker] Meeting resumed: ${this.meetingState.meetingTitle} (preserving ${Math.round(previousDuration / 60000)}m duration)`);
-        } else {
-          // This is a new meeting
-          this.meetingState = {
-            isActive: true,
-            meetingId,
-            startTime: startTime,
-            meetingTitle: this.getMeetingTitle(),
-            resumed: false
-          };
-          
-          console.log(`[SimpleMeetTracker] New meeting started: ${this.meetingState.meetingTitle} at ${new Date(startTime).toLocaleTimeString()}`);
-        }
-        
-        // Send meeting start to background
-        this.sendMeetingStateToBackground('started');
-        
-        // Start continuous minute tracking
-        this.startMinuteTracking();
-      });
+      // Simple meeting start - let background script handle session continuation
+      this.meetingState = {
+        isActive: true,
+        meetingId,
+        startTime: startTime,
+        meetingTitle: this.getMeetingTitle(),
+        resumed: false // This doesn't matter anymore - background handles sessions
+      };
+      
+      console.log(`[SimpleMeetTracker] Meeting detected: ${this.meetingState.meetingTitle} at ${new Date(startTime).toLocaleTimeString()}`);
+      
+      // Send meeting start to background - background will handle session logic
+      this.sendMeetingStateToBackground('started');
+      
+      // Start continuous minute tracking
+      this.startMinuteTracking();
       
     } else if (!isActive && this.meetingState.isActive) {
       // Meeting ended
@@ -579,20 +544,9 @@ class SimpleMeetTracker {
     
     const currentTime = Date.now();
     
-    // Calculate duration considering resumed meetings
-    let cumulativeDuration;
-    let currentMinute;
-    
-    if (this.meetingState.resumed && this.meetingState.previousDuration && this.meetingState.resumedAt) {
-      // For resumed meetings: add the previous duration to the time since resumption
-      const sessionDuration = currentTime - this.meetingState.resumedAt;
-      cumulativeDuration = this.meetingState.previousDuration + sessionDuration;
-      currentMinute = Math.floor(cumulativeDuration / 60000); // Total minutes from original start
-    } else {
-      // For new meetings: standard calculation
-      cumulativeDuration = currentTime - this.meetingState.startTime;
-      currentMinute = Math.floor(cumulativeDuration / 60000); // Minutes since start
-    }
+    // Simple duration calculation - let background handle session logic
+    const cumulativeDuration = currentTime - this.meetingState.startTime;
+    const currentMinute = Math.floor(cumulativeDuration / 60000); // Minutes since start
     
     // Only log if this is a new minute
     if (currentMinute !== this.lastMinuteLogged) {
@@ -605,18 +559,14 @@ class SimpleMeetTracker {
         participants: Array.from(this.participants.values()),
         participantCount: this.participants.size,
         cumulativeDuration: cumulativeDuration,
-        resumed: this.meetingState.resumed || false,
-        previousDuration: this.meetingState.previousDuration || 0,
-        sessionDuration: this.meetingState.resumedAt ? currentTime - this.meetingState.resumedAt : cumulativeDuration
+        resumed: false, // Content script no longer handles resume logic
+        previousDuration: 0,
+        sessionDuration: cumulativeDuration
       };
       
-      if (this.meetingState.resumed) {
-        console.log(`[SimpleMeetTracker] Minute ${minuteData.minute}: ${minuteData.participantCount} participants (resumed, total: ${Math.round(cumulativeDuration / 60000)}m, session: ${Math.round(minuteData.sessionDuration / 60000)}m)`);
-      } else {
-        console.log(`[SimpleMeetTracker] Minute ${minuteData.minute}: ${minuteData.participantCount} participants`);
-      }
+      console.log(`[SimpleMeetTracker] Minute ${minuteData.minute}: ${minuteData.participantCount} participants`);
       
-      // Send minute data to background
+      // Send minute data to background - background will handle session logic
       this.sendMinuteDataToBackground(minuteData);
     }
   }
