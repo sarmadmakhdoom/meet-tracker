@@ -890,22 +890,22 @@ class SimpleMeetTracker {
       const now = Date.now();
       const timeSinceStart = now - this.meetingState.startTime;
       
-      // If the meeting has been "active" for at least 30 seconds but shows no signs of life
-      if (timeSinceStart > 30 * 1000) {
-        console.log('[SimpleMeetTracker] Aggressive check: Ending meeting due to no activity signs');
+      // If the meeting has been "active" for at least 5 MINUTES but shows no signs of life
+      // Increased from 30 seconds to 5 minutes to prevent premature ending
+      if (timeSinceStart > 5 * 60 * 1000) {
+        console.log(`[SimpleMeetTracker] Aggressive check: Meeting has been active for ${Math.round(timeSinceStart/60000)} minutes with no activity signs`);
+        console.log('[SimpleMeetTracker] This might be a stuck session - but NOT ending automatically');
+        console.log('[SimpleMeetTracker] Use manual cleanup if meeting has truly ended');
         
-        this.meetingState.isActive = false;
-        this.meetingState.endTime = now;
+        // DON'T automatically end the meeting - just log the issue
+        // Let user manually end via dashboard or let natural meeting end detection handle it
+        // this.meetingState.isActive = false;
+        // this.meetingState.endTime = now;
+        // this.sendMeetingStateToBackground('ended');
+        // this.stopMinuteTracking();
+        // this.participants.clear();
         
-        // Send meeting end to background
-        this.sendMeetingStateToBackground('ended');
-        
-        // Stop minute tracking
-        this.stopMinuteTracking();
-        
-        // Clear participants
-        this.participants.clear();
-        
+        console.log('[SimpleMeetTracker] Continuing to track - meeting may still be active in background');
         return;
       }
     }
