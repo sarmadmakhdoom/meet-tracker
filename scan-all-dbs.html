@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Complete IndexedDB Scanner</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 15px; background: white; border-radius: 8px; border: 1px solid #ddd; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        .warning { background: #fff3e0; color: #ef6c00; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        button { margin: 5px; padding: 8px 16px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #1565c0; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .db-info { margin: 10px 0; padding: 10px; border-left: 4px solid #2196f3; background: #f8f9ff; }
+        .store-info { margin: 5px 0 5px 20px; padding: 8px; background: #f0f4ff; border-radius: 4px; }
+        .data-sample { margin: 5px 0 5px 40px; padding: 6px; background: #fff; border: 1px solid #ddd; border-radius: 4px; font-size: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Complete IndexedDB Scanner</h1>
+        
+        <div class="section info">
+            <h2>What This Does</h2>
+            <p>This tool scans ALL IndexedDB databases in your browser to find where your meeting data is actually stored.</p>
+            <button id="scan-all-btn">🔍 Scan All Databases</button>
+            <button id="scan-specific-btn">🎯 Scan Specific Database</button>
+        </div>
+        
+        <div id="scan-results"></div>
+    </div>
+
+    <script src="scan-all-dbs.js"></script>
+</body>
+</html>

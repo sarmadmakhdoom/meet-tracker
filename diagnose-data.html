@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Data Diagnostic Tool</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 15px; background: white; border-radius: 8px; border: 1px solid #ddd; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e8; color: #2e7d32; }
+        .warning { background: #fff3e0; color: #ef6c00; }
+        .info { background: #e3f2fd; color: #1565c0; }
+        button { margin: 5px; padding: 8px 16px; background: #1976d2; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #1565c0; }
+        .danger { background: #d32f2f; }
+        .danger:hover { background: #c62828; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; font-size: 12px; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 11px; }
+        th { background: #f0f0f0; font-weight: bold; }
+        .duration-mismatch { background: #ffcdd2; }
+        .duration-correct { background: #c8e6c9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Meeting Data Diagnostic Tool</h1>
+        
+        <div class="section info">
+            <h2>Purpose</h2>
+            <p>This tool compares data between the old 'meetings' store and new 'meetingSessions' store to identify discrepancies.</p>
+            <button id="diagnose-btn">🔍 Run Diagnosis</button>
+            <button id="fix-btn" class="danger">🔧 Fix Data Mismatch</button>
+        </div>
+        
+        <div id="diagnosis-results"></div>
+        
+        <div id="fix-results"></div>
+    </div>
+
+    <script src="storage-manager.js"></script>
+    <script src="diagnose-data.js"></script>
+</body>
+</html>

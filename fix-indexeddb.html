@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>IndexedDB Repair & Migration Tool</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f0f0f0; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 4px; }
+        .error { color: red; background: #ffebee; }
+        .success { color: green; background: #e8f5e8; }
+        .warning { color: orange; background: #fff3e0; }
+        .info { color: blue; background: #e3f2fd; }
+        button { margin: 5px; padding: 8px 16px; cursor: pointer; }
+        .danger { background: #f44336; color: white; }
+        .primary { background: #2196f3; color: white; }
+        .success-btn { background: #4caf50; color: white; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; max-height: 300px; overflow-y: auto; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+        .stat-box { padding: 10px; background: #f8f9fa; border-radius: 4px; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 IndexedDB Repair & Migration Tool</h1>
+        
+        <div class="section info">
+            <h2>Issue Detected</h2>
+            <p>Your meeting data appears to be in the wrong storage location. This tool will:</p>
+            <ul>
+                <li>✅ Scan all IndexedDB stores for your data</li>
+                <li>🔄 Migrate data to the correct location</li>
+                <li>✅ Fix duration calculations</li>
+                <li>🧹 Clean up any inconsistencies</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Step 1: Database Analysis</h2>
+            <button class="primary" onclick="analyzeDatabase()">🔍 Analyze Database</button>
+            <button class="primary" onclick="scanRawIndexedDB()">📊 Scan Raw IndexedDB</button>
+            <div id="analysis-output"></div>
+        </div>
+
+        <div class="section">
+            <h2>Step 2: Data Migration</h2>
+            <button class="success-btn" onclick="migrateData()">🔄 Migrate & Fix Data</button>
+            <button class="warning" onclick="backupData()">💾 Backup Data First</button>
+            <div id="migration-output"></div>
+        </div>
+
+        <div class="section">
+            <h2>Step 3: Verification</h2>
+            <button class="primary" onclick="verifyFix()">✅ Verify Fix</button>
+            <button class="danger" onclick="clearAllData()" style="margin-left: 20px;">🗑️ Clear All Data</button>
+            <div id="verification-output"></div>
+        </div>
+
+        <div id="debug-output" class="section" style="display: none;">
+            <h2>🐛 Debug Information</h2>
+            <div id="debug-content"></div>
+        </div>
+    </div>
+
+    <script src="storage-manager.js"></script>
+    <script>
+        let storageManager;
+        let rawDBConnection;
+
+        // Initialize storage manager
+        async function initStorageManager() {
+            if (!storageManager) {
+                storageManager = new MeetingStorageManager();
+                await storageManager.init();
+            }
+            return storageManager;
+        }
+
+        // Raw IndexedDB access
+        async function openRawDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('MeetingTracker', 3);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    
+                    // Ensure all object stores exist
+                    if (!db.objectStoreNames.contains('meetings')) {
+                        db.createObjectStore('meetings', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('meetingSessions')) {
+                        db.createObjectStore('meetingSessions', { keyPath: 'sessionId' });
+                    }
+                    if (!db.objectStoreNames.contains('participants')) {
+                        db.createObjectStore('participants', { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+
+        async function analyzeDatabase() {
+            const output = document.getElementById('analysis-output');
+            output.innerHTML = '<div class="info">🔍 Analyzing database structure...</div>';
+            
+            try {
+                await initStorageManager();
+                const db = await openRawDatabase();
+                
+                const analysis = {
+                    storeNames: Array.from(db.objectStoreNames),
+                    meetings: [],
+                    sessions: [],
+                    participants: []
+                };
+                
+                // Check each object store
+                const transaction = db.transaction(['meetings', 'meetingSessions', 'participants'], 'readonly');
+                
+                // Get meetings
+                const meetingsStore = transaction.objectStore('meetings');
+                const meetingsRequest = meetingsStore.getAll();
+                analysis.meetings = await new Promise((resolve, reject) => {
+                    meetingsRequest.onsuccess = () => resolve(meetingsRequest.result);
+                    meetingsRequest.onerror = () => reject(meetingsRequest.error);
+                });
+                
+                // Get sessions  
+                const sessionsStore = transaction.objectStore('meetingSessions');
+                const sessionsRequest = sessionsStore.getAll();
+                analysis.sessions = await new Promise((resolve, reject) => {
+                    sessionsRequest.onsuccess = () => resolve(sessionsRequest.result);
+                    sessionsRequest.onerror = () => reject(sessionsRequest.error);
+                });
+                
+                // Get participants
+                const participantsStore = transaction.objectStore('participants');
+                const participantsRequest = participantsStore.getAll();
+                analysis.participants = await new Promise((resolve, reject) => {
+                    participantsRequest.onsuccess = () => resolve(participantsRequest.result);
+                    participantsRequest.onerror = () => reject(participantsRequest.error);
+                });
+                
+                // Display analysis
+                let html = '<div class="success">✅ Database analysis complete</div>';
+                html += '<div class="stats">';
+                html += `<div class="stat-box"><strong>Object Stores</strong><br/>${analysis.storeNames.length}<br/>${analysis.storeNames.join(', ')}</div>`;
+                html += `<div class="stat-box"><strong>Meetings</strong><br/>${analysis.meetings.length}</div>`;
+                html += `<div class="stat-box"><strong>Sessions</strong><br/>${analysis.sessions.length}</div>`;
+                html += `<div class="stat-box"><strong>Participants</strong><br/>${analysis.participants.length}</div>`;
+                html += '</div>';
+                
+                // Show detailed data
+                if (analysis.meetings.length > 0) {
+                    html += '<h3>📋 Meetings Found:</h3>';
+                    analysis.meetings.forEach(meeting => {
+                        const duration = meeting.endTime ? (meeting.endTime - meeting.startTime) : 0;
+                        html += `<div class="section">
+                            <strong>ID:</strong> ${meeting.id}<br/>
+                            <strong>Title:</strong> ${meeting.title}<br/>
+                            <strong>Start:</strong> ${new Date(meeting.startTime).toLocaleString()}<br/>
+                            <strong>End:</strong> ${meeting.endTime ? new Date(meeting.endTime).toLocaleString() : 'Still active'}<br/>
+                            <strong>Duration:</strong> ${Math.round(duration / 60000)} minutes (${Math.round(duration / 1000)} seconds)<br/>
+                            <strong>Participants:</strong> ${meeting.participants ? meeting.participants.length : 0}
+                        </div>`;
+                    });
+                }
+                
+                if (analysis.sessions.length > 0) {
+                    html += '<h3>🎯 Sessions Found:</h3>';
+                    analysis.sessions.forEach(session => {
+                        const duration = session.endTime ? (session.endTime - session.startTime) : 0;
+                        html += `<div class="section">
+                            <strong>Session ID:</strong> ${session.sessionId}<br/>
+                            <strong>Meeting ID:</strong> ${session.meetingId}<br/>
+                            <strong>Title:</strong> ${session.title}<br/>
+                            <strong>Start:</strong> ${new Date(session.startTime).toLocaleString()}<br/>
+                            <strong>End:</strong> ${session.endTime ? new Date(session.endTime).toLocaleString() : 'Still active'}<br/>
+                            <strong>Duration:</strong> ${Math.round(duration / 60000)} minutes (${Math.round(duration / 1000)} seconds)<br/>
+                            <strong>Participants:</strong> ${session.participants ? session.participants.length : 0}
+                        </div>`;
+                    });
+                }
+                
+                output.innerHTML = html;
+                
+                // Store analysis for later use
+                window.dbAnalysis = analysis;
+                
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Analysis failed: ${error.message}</div>`;
+                console.error('Database analysis error:', error);
+            }
+        }
+
+        async function scanRawIndexedDB() {
+            const output = document.getElementById('analysis-output');
+            output.innerHTML = '<div class="info">📊 Scanning raw IndexedDB data...</div>';
+            
+            try {
+                // Get all IndexedDB databases
+                const databases = await indexedDB.databases();
+                
+                let html = '<div class="success">✅ Raw IndexedDB scan complete</div>';
+                html += '<h3>📦 Available Databases:</h3>';
+                
+                for (const dbInfo of databases) {
+                    html += `<div class="section">
+                        <strong>Name:</strong> ${dbInfo.name}<br/>
+                        <strong>Version:</strong> ${dbInfo.version}
+                    </div>`;
+                    
+                    // Open each database and scan its contents
+                    try {
+                        const db = await new Promise((resolve, reject) => {
+                            const request = indexedDB.open(dbInfo.name);
+                            request.onsuccess = () => resolve(request.result);
+                            request.onerror = () => reject(request.error);
+                        });
+                        
+                        html += `<div class="section">
+                            <strong>Object Stores in ${dbInfo.name}:</strong><br/>
+                            ${Array.from(db.objectStoreNames).join(', ')}
+                        </div>`;
+                        
+                        // If this is our MeetingTracker database, scan all stores
+                        if (dbInfo.name === 'MeetingTracker') {
+                            const transaction = db.transaction(Array.from(db.objectStoreNames), 'readonly');
+                            
+                            for (const storeName of db.objectStoreNames) {
+                                try {
+                                    const store = transaction.objectStore(storeName);
+                                    const count = await new Promise((resolve, reject) => {
+                                        const countRequest = store.count();
+                                        countRequest.onsuccess = () => resolve(countRequest.result);
+                                        countRequest.onerror = () => reject(countRequest.error);
+                                    });
+                                    
+                                    html += `<div class="stat-box">
+                                        <strong>${storeName}</strong><br/>
+                                        ${count} records
+                                    </div>`;
+                                    
+                                    // Get a sample of the data
+                                    if (count > 0) {
+                                        const sample = await new Promise((resolve, reject) => {
+                                            const getRequest = store.getAll();
+                                            getRequest.onsuccess = () => resolve(getRequest.result.slice(0, 3));
+                                            getRequest.onerror = () => reject(getRequest.error);
+                                        });
+                                        
+                                        html += `<details>
+                                            <summary>Sample data from ${storeName} (${Math.min(count, 3)} items)</summary>
+                                            <pre>${JSON.stringify(sample, null, 2)}</pre>
+                                        </details>`;
+                                    }
+                                } catch (storeError) {
+                                    console.error(`Error scanning store ${storeName}:`, storeError);
+                                }
+                            }
+                        }
+                        
+                        db.close();
+                        
+                    } catch (dbError) {
+                        console.error(`Error opening database ${dbInfo.name}:`, dbError);
+                    }
+                }
+                
+                output.innerHTML = html;
+                
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Raw scan failed: ${error.message}</div>`;
+                console.error('Raw IndexedDB scan error:', error);
+            }
+        }
+
+        async function migrateData() {
+            const output = document.getElementById('migration-output');
+            output.innerHTML = '<div class="info">🔄 Starting data migration...</div>';
+            
+            try {
+                await initStorageManager();
+                const db = await openRawDatabase();
+                
+                let migrationLog = [];
+                let migrationStats = {
+                    meetingsMigrated: 0,
+                    sessionsCreated: 0,
+                    duplicatesFound: 0,
+                    errorsFound: 0
+                };
+                
+                // Get all meetings from the meetings store
+                const transaction = db.transaction(['meetings', 'meetingSessions'], 'readwrite');
+                const meetingsStore = transaction.objectStore('meetings');
+                const sessionsStore = transaction.objectStore('meetingSessions');
+                
+                const meetings = await new Promise((resolve, reject) => {
+                    const request = meetingsStore.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                
+                migrationLog.push(`Found ${meetings.length} meetings to migrate`);
+                
+                // Process each meeting
+                for (const meeting of meetings) {
+                    try {
+                        migrationLog.push(`Processing meeting: ${meeting.id} - "${meeting.title}"`);
+                        
+                        // Check if this meeting already exists as a session
+                        const existingSessions = await new Promise((resolve, reject) => {
+                            const index = sessionsStore.index ? sessionsStore.index('meetingId') : null;
+                            if (index) {
+                                const request = index.getAll(meeting.id);
+                                request.onsuccess = () => resolve(request.result);
+                                request.onerror = () => reject(request.error);
+                            } else {
+                                // Fallback: get all sessions and filter
+                                const request = sessionsStore.getAll();
+                                request.onsuccess = () => {
+                                    const sessions = request.result.filter(s => s.meetingId === meeting.id);
+                                    resolve(sessions);
+                                };
+                                request.onerror = () => reject(request.error);
+                            }
+                        });
+                        
+                        if (existingSessions.length > 0) {
+                            migrationLog.push(`  ⚠️ Found ${existingSessions.length} existing sessions for this meeting`);
+                            migrationStats.duplicatesFound++;
+                            continue;
+                        }
+                        
+                        // Convert meeting to session format
+                        const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                        const session = {
+                            sessionId: sessionId,
+                            meetingId: meeting.id,
+                            title: meeting.title || meeting.id,
+                            startTime: meeting.startTime,
+                            endTime: meeting.endTime,
+                            isActive: !meeting.endTime,
+                            participants: meeting.participants || [],
+                            minuteLogs: meeting.minuteLogs || [],
+                            url: meeting.url,
+                            dataSource: meeting.dataSource || 'migrated',
+                            endReason: meeting.endReason || 'meeting_ended',
+                            migrated: true,
+                            migratedAt: Date.now(),
+                            originalMeetingData: meeting
+                        };
+                        
+                        // Calculate and fix duration if needed
+                        const duration = session.endTime ? (session.endTime - session.startTime) : 0;
+                        migrationLog.push(`  📊 Duration: ${Math.round(duration / 60000)} minutes (${Math.round(duration / 1000)} seconds)`);
+                        
+                        // Save the session
+                        await new Promise((resolve, reject) => {
+                            const request = sessionsStore.add(session);
+                            request.onsuccess = () => resolve(request.result);
+                            request.onerror = () => reject(request.error);
+                        });
+                        
+                        migrationLog.push(`  ✅ Created session: ${sessionId}`);
+                        migrationStats.sessionsCreated++;
+                        migrationStats.meetingsMigrated++;
+                        
+                    } catch (meetingError) {
+                        migrationLog.push(`  ❌ Error processing meeting ${meeting.id}: ${meetingError.message}`);
+                        migrationStats.errorsFound++;
+                    }
+                }
+                
+                // Display results
+                let html = '<div class="success">✅ Migration completed</div>';
+                html += '<div class="stats">';
+                html += `<div class="stat-box"><strong>Meetings Migrated</strong><br/>${migrationStats.meetingsMigrated}</div>`;
+                html += `<div class="stat-box"><strong>Sessions Created</strong><br/>${migrationStats.sessionsCreated}</div>`;
+                html += `<div class="stat-box"><strong>Duplicates Found</strong><br/>${migrationStats.duplicatesFound}</div>`;
+                html += `<div class="stat-box"><strong>Errors</strong><br/>${migrationStats.errorsFound}</div>`;
+                html += '</div>';
+                
+                html += '<h3>📋 Migration Log:</h3>';
+                html += '<pre>' + migrationLog.join('\n') + '</pre>';
+                
+                output.innerHTML = html;
+                
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Migration failed: ${error.message}</div>`;
+                console.error('Migration error:', error);
+            }
+        }
+
+        async function verifyFix() {
+            const output = document.getElementById('verification-output');
+            output.innerHTML = '<div class="info">✅ Verifying fix...</div>';
+            
+            try {
+                await initStorageManager();
+                
+                // Test storage manager methods
+                const sessions = await storageManager.getAllSessions();
+                const meetings = await storageManager.getMeetings();
+                
+                let html = '<div class="success">✅ Verification complete</div>';
+                html += '<div class="stats">';
+                html += `<div class="stat-box"><strong>Sessions Available</strong><br/>${sessions.length}</div>`;
+                html += `<div class="stat-box"><strong>Meetings Available</strong><br/>${meetings.length}</div>`;
+                html += '</div>';
+                
+                // Test specific meeting
+                const testMeetingId = 'fdq-ptco-fdj';
+                const meetingSessions = await storageManager.getMeetingSessions(testMeetingId);
+                
+                html += `<div class="section">
+                    <strong>Test Meeting Sessions (${testMeetingId}):</strong><br/>
+                    Found ${meetingSessions.length} sessions
+                </div>`;
+                
+                if (meetingSessions.length > 0) {
+                    const totalDuration = meetingSessions.reduce((sum, s) => {
+                        return sum + (s.endTime ? (s.endTime - s.startTime) : 0);
+                    }, 0);
+                    
+                    html += `<div class="section success">
+                        <strong>✅ Sessions found for your meeting!</strong><br/>
+                        Total Duration: ${Math.round(totalDuration / 60000)} minutes<br/>
+                        Sessions: ${meetingSessions.length}
+                    </div>`;
+                    
+                    meetingSessions.forEach((session, index) => {
+                        const duration = session.endTime ? (session.endTime - session.startTime) : 0;
+                        html += `<div class="section">
+                            <strong>Session ${index + 1}:</strong> ${session.sessionId}<br/>
+                            <strong>Duration:</strong> ${Math.round(duration / 60000)} minutes (${Math.round(duration / 1000)} seconds)<br/>
+                            <strong>Start:</strong> ${new Date(session.startTime).toLocaleString()}<br/>
+                            <strong>End:</strong> ${session.endTime ? new Date(session.endTime).toLocaleString() : 'Active'}
+                        </div>`;
+                    });
+                }
+                
+                output.innerHTML = html;
+                
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Verification failed: ${error.message}</div>`;
+                console.error('Verification error:', error);
+            }
+        }
+
+        async function backupData() {
+            const output = document.getElementById('migration-output');
+            output.innerHTML = '<div class="info">💾 Creating backup...</div>';
+            
+            try {
+                const db = await openRawDatabase();
+                const transaction = db.transaction(['meetings', 'meetingSessions', 'participants'], 'readonly');
+                
+                const backup = {
+                    timestamp: new Date().toISOString(),
+                    meetings: [],
+                    sessions: [],
+                    participants: []
+                };
+                
+                // Get all data
+                const meetingsStore = transaction.objectStore('meetings');
+                backup.meetings = await new Promise((resolve, reject) => {
+                    const request = meetingsStore.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                
+                const sessionsStore = transaction.objectStore('meetingSessions');
+                backup.sessions = await new Promise((resolve, reject) => {
+                    const request = sessionsStore.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                
+                const participantsStore = transaction.objectStore('participants');
+                backup.participants = await new Promise((resolve, reject) => {
+                    const request = participantsStore.getAll();
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+                
+                // Create downloadable backup
+                const backupData = JSON.stringify(backup, null, 2);
+                const blob = new Blob([backupData], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `meeting-tracker-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                output.innerHTML = `<div class="success">✅ Backup created and downloaded</div>`;
+                
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Backup failed: ${error.message}</div>`;
+                console.error('Backup error:', error);
+            }
+        }
+
+        async function clearAllData() {
+            if (!confirm('⚠️ This will permanently delete ALL meeting data. Are you sure?')) {
+                return;
+            }
+            
+            const output = document.getElementById('verification-output');
+            output.innerHTML = '<div class="warning">🗑️ Clearing all data...</div>';
+            
+            try {
+                await initStorageManager();
+                await storageManager.clearAllData();
+                
+                output.innerHTML = '<div class="success">✅ All data cleared</div>';
+                
+            } catch (error) {
+                output.innerHTML = `<div class="error">❌ Clear failed: ${error.message}</div>`;
+                console.error('Clear error:', error);
+            }
+        }
+
+        // Auto-run analysis on page load
+        window.addEventListener('load', () => {
+            setTimeout(analyzeDatabase, 1000);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Check Meeting Sessions</title>
+    <style>
+        body { font-family: monospace; padding: 20px; }
+        .session { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+        .active { background-color: #e8f5e8; }
+        .error { color: red; }
+        .info { color: blue; }
+        pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Meeting Session Inspector</h1>
+    <button onclick="checkSessions()">Check All Sessions</button>
+    <button onclick="checkSpecificMeeting()">Check Specific Meeting</button>
+    
+    <div id="output"></div>
+
+    <script>
+        // Import storage manager
+        const script = document.createElement('script');
+        script.src = 'storage-manager.js';
+        document.head.appendChild(script);
+
+        async function checkSessions() {
+            const output = document.getElementById('output');
+            output.innerHTML = '<p class="info">Loading sessions...</p>';
+            
+            try {
+                // Wait for storage manager to load
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                const storageManager = new MeetingStorageManager();
+                await storageManager.init();
+                
+                // Get all sessions
+                const sessions = await storageManager.getAllSessions();
+                
+                output.innerHTML = `<h2>Found ${sessions.length} sessions</h2>`;
+                
+                // Group by meeting ID
+                const groupedSessions = {};
+                sessions.forEach(session => {
+                    const meetingId = session.meetingId;
+                    if (!groupedSessions[meetingId]) {
+                        groupedSessions[meetingId] = [];
+                    }
+                    groupedSessions[meetingId].push(session);
+                });
+                
+                // Display grouped sessions
+                for (const [meetingId, meetingSessions] of Object.entries(groupedSessions)) {
+                    const div = document.createElement('div');
+                    div.className = 'session';
+                    
+                    const totalDuration = meetingSessions.reduce((sum, s) => {
+                        return sum + (s.endTime ? (s.endTime - s.startTime) : 0);
+                    }, 0);
+                    
+                    div.innerHTML = `
+                        <h3>Meeting ID: ${meetingId}</h3>
+                        <p><strong>Total Sessions:</strong> ${meetingSessions.length}</p>
+                        <p><strong>Total Duration:</strong> ${Math.round(totalDuration / 60000)} minutes</p>
+                        <p><strong>Title:</strong> ${meetingSessions[0].title}</p>
+                    `;
+                    
+                    // Add each session details
+                    meetingSessions.forEach((session, index) => {
+                        const sessionDuration = session.endTime ? (session.endTime - session.startTime) : 0;
+                        const sessionDiv = document.createElement('div');
+                        sessionDiv.innerHTML = `
+                            <h4>Session ${index + 1} (${session.sessionId})</h4>
+                            <ul>
+                                <li><strong>Start:</strong> ${new Date(session.startTime).toLocaleString()}</li>
+                                <li><strong>End:</strong> ${session.endTime ? new Date(session.endTime).toLocaleString() : 'Still active'}</li>
+                                <li><strong>Duration:</strong> ${Math.round(sessionDuration / 60000)} minutes (${Math.round(sessionDuration / 1000)} seconds)</li>
+                                <li><strong>Participants:</strong> ${session.participants ? session.participants.length : 0}</li>
+                                <li><strong>Data Source:</strong> ${session.dataSource || 'unknown'}</li>
+                                ${session.endReason ? `<li><strong>End Reason:</strong> ${session.endReason}</li>` : ''}
+                            </ul>
+                        `;
+                        div.appendChild(sessionDiv);
+                    });
+                    
+                    output.appendChild(div);
+                }
+                
+            } catch (error) {
+                output.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                console.error('Error checking sessions:', error);
+            }
+        }
+
+        async function checkSpecificMeeting() {
+            const meetingId = prompt('Enter meeting ID to check:', 'fdq-ptco-fdj');
+            if (!meetingId) return;
+            
+            const output = document.getElementById('output');
+            output.innerHTML = '<p class="info">Loading specific meeting sessions...</p>';
+            
+            try {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                const storageManager = new MeetingStorageManager();
+                await storageManager.init();
+                
+                // Get sessions for this meeting
+                const sessions = await storageManager.getMeetingSessions(meetingId);
+                
+                output.innerHTML = `<h2>Sessions for Meeting: ${meetingId}</h2>`;
+                
+                if (sessions.length === 0) {
+                    output.innerHTML += '<p>No sessions found for this meeting ID.</p>';
+                    return;
+                }
+                
+                const totalDuration = sessions.reduce((sum, s) => {
+                    return sum + (s.endTime ? (s.endTime - s.startTime) : 0);
+                }, 0);
+                
+                output.innerHTML += `
+                    <p><strong>Total Sessions:</strong> ${sessions.length}</p>
+                    <p><strong>Total Duration:</strong> ${Math.round(totalDuration / 60000)} minutes</p>
+                `;
+                
+                sessions.forEach((session, index) => {
+                    const sessionDuration = session.endTime ? (session.endTime - session.startTime) : 0;
+                    const div = document.createElement('div');
+                    div.className = 'session';
+                    
+                    div.innerHTML = `
+                        <h3>Session ${index + 1}</h3>
+                        <pre>${JSON.stringify(session, null, 2)}</pre>
+                        <p><strong>Duration:</strong> ${Math.round(sessionDuration / 60000)} minutes (${Math.round(sessionDuration / 1000)} seconds)</p>
+                    `;
+                    
+                    output.appendChild(div);
+                });
+                
+            } catch (error) {
+                output.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+                console.error('Error checking specific meeting:', error);
+            }
+        }
+    </script>
+</body>
+</html>
