@@ -755,7 +755,8 @@ class SimpleMeetTracker {
       'join call', 'ask to join', 'captions', 'hand', 'raise hand', 'lower hand',
       'turn off captions', 'turn on captions', 'joined', 'left', 'disconnected',
       'reconnected', 'presenting', 'stopped presenting', 'entered', 'exited',
-      'connected', 'meeting host', 'host', 'guest', 'visitor', 'organizer'
+      'connected', 'meeting host', 'host', 'guest', 'visitor', 'organizer',
+      'draw', 'drawing', 'annotation', 'annotate', 'pen', 'marker', 'highlighter'
     ];
     
     if (invalidNames.includes(name.toLowerCase())) {
