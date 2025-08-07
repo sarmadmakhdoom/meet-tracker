@@ -57,17 +57,39 @@ class MeetingStorageManager {
     async saveMeeting(meeting) {
         return new Promise(async (resolve, reject) => {
             try {
-                // First, get existing participant data before starting the transaction
+                // Handle participant updates safely
                 const participantUpdates = [];
-                for (const participantName of meeting.participants) {
-                    const existing = await this.getParticipant(participantName);
-                    participantUpdates.push({
-                        name: participantName,
-                        meetingCount: (existing?.meetingCount || 0) + 1,
-                        totalTime: (existing?.totalTime || 0) + (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0),
-                        lastMeeting: meeting.startTime,
-                        meetings: [...(existing?.meetings || []), meeting.id] // Keep all meetings
-                    });
+                
+                // Only process participants if they exist and are valid
+                if (meeting.participants && Array.isArray(meeting.participants)) {
+                    for (const participant of meeting.participants) {
+                        // Extract participant name safely
+                        let participantName = '';
+                        if (typeof participant === 'string') {
+                            participantName = participant;
+                        } else if (participant && typeof participant === 'object') {
+                            participantName = participant.name || participant.displayName || participant.id || 'Unknown';
+                        }
+                        
+                        // Skip if we couldn't extract a valid name
+                        if (!participantName || participantName === 'Unknown' || participantName === 'undefined') {
+                            continue;
+                        }
+                        
+                        try {
+                            const existing = await this.getParticipant(participantName);
+                            participantUpdates.push({
+                                name: participantName,
+                                meetingCount: (existing?.meetingCount || 0) + 1,
+                                totalTime: (existing?.totalTime || 0) + (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0),
+                                lastMeeting: meeting.startTime,
+                                meetings: [...(existing?.meetings || []), meeting.id]
+                            });
+                        } catch (participantError) {
+                            console.warn(`⚠️ Error processing participant ${participantName}:`, participantError);
+                            // Continue with other participants even if one fails
+                        }
+                    }
                 }
                 
                 // Now start the transaction with all data ready
@@ -81,7 +103,7 @@ class MeetingStorageManager {
                     ...meeting,
                     date: new Date(meeting.startTime).toISOString().split('T')[0], // Add date index
                     duration: meeting.endTime ? (meeting.endTime - meeting.startTime) : null,
-                    participantCount: meeting.participants.length
+                    participantCount: meeting.participants ? meeting.participants.length : 0
                 };
 
                 // Remove minutes from main meeting object to reduce size
