@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Database Diagnostic Tool</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #f0f0f0; }
+        .test { margin: 10px 0; padding: 15px; border-radius: 5px; }
+        .success { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; }
+        .error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
+        .info { background: #d1ecf1; border: 1px solid #bee5eb; color: #0c5460; }
+        button { padding: 10px 15px; margin: 5px; font-size: 14px; cursor: pointer; }
+        pre { background: #fff; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        .log { max-height: 300px; overflow-y: auto; background: #000; color: #0f0; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>🔧 Database Diagnostic Tool</h1>
+    <p>This tool helps diagnose IndexedDB initialization issues with your meeting extension.</p>
+    
+    <div>
+        <button onclick="runFullDiagnostic()">🏥 Run Full Diagnostic</button>
+        <button onclick="testBasicIndexedDB()">🔍 Test Basic IndexedDB</button>
+        <button onclick="testStorageManager()">💾 Test Storage Manager</button>
+        <button onclick="forceDatabaseRecreation()">🔄 Force Database Recreation</button>
+        <button onclick="clearResults()">🧹 Clear Results</button>
+    </div>
+    
+    <div id="results"></div>
+    <div id="console-log" class="log" style="margin-top: 20px; display: none;">
+        <h3>Console Output:</h3>
+        <pre id="log-content"></pre>
+    </div>
+
+    <script src="storage-manager.js"></script>
+    <script>
+        let logContent = [];
+        
+        // Override console.log to capture output
+        const originalConsoleLog = console.log;
+        const originalConsoleError = console.error;
+        const originalConsoleWarn = console.warn;
+        
+        function captureLog(level, ...args) {
+            const timestamp = new Date().toISOString();
+            const message = args.map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            
+            logContent.push(`[${timestamp}] ${level.toUpperCase()}: ${message}`);
+            
+            // Also call original
+            if (level === 'log') originalConsoleLog(...args);
+            else if (level === 'error') originalConsoleError(...args);
+            else if (level === 'warn') originalConsoleWarn(...args);
+            
+            // Update log display
+            updateLogDisplay();
+        }
+        
+        console.log = (...args) => captureLog('log', ...args);
+        console.error = (...args) => captureLog('error', ...args);
+        console.warn = (...args) => captureLog('warn', ...args);
+        
+        function updateLogDisplay() {
+            const logElement = document.getElementById('log-content');
+            if (logElement) {
+                logElement.textContent = logContent.slice(-50).join('\n'); // Show last 50 log entries
+                logElement.scrollTop = logElement.scrollHeight;
+            }
+        }
+        
+        function showConsoleLog() {
+            document.getElementById('console-log').style.display = 'block';
+            updateLogDisplay();
+        }
+
+        function addResult(title, type, content, details = null) {
+            const resultsDiv = document.getElementById('results');
+            const resultDiv = document.createElement('div');
+            resultDiv.className = `test ${type}`;
+            
+            let html = `<h3>${title}</h3><div>${content}</div>`;
+            
+            if (details) {
+                html += `<details><summary>Details</summary><pre>${JSON.stringify(details, null, 2)}</pre></details>`;
+            }
+            
+            resultDiv.innerHTML = html;
+            resultsDiv.insertBefore(resultDiv, resultsDiv.firstChild);
+            
+            if (type === 'error') {
+                showConsoleLog();
+            }
+        }
+
+        async function testBasicIndexedDB() {
+            console.log('🔍 Testing basic IndexedDB availability...');
+            
+            try {
+                // Test 1: Check if IndexedDB is available
+                if (!window.indexedDB && !self.indexedDB) {
+                    addResult('IndexedDB Availability', 'error', 'IndexedDB is not available in this context');
+                    return;
+                }
+                
+                const idb = window.indexedDB || self.indexedDB;
+                addResult('IndexedDB Availability', 'success', `IndexedDB is available: ${idb.constructor.name}`);
+                
+                // Test 2: Try to open a test database
+                const testDbName = 'DiagnosticTestDB';
+                console.log(`Opening test database: ${testDbName}`);
+                
+                const deleteResult = await new Promise((resolve) => {
+                    const deleteReq = idb.deleteDatabase(testDbName);
+                    deleteReq.onsuccess = () => resolve('deleted');
+                    deleteReq.onerror = () => resolve('delete-failed');
+                    deleteReq.onblocked = () => resolve('delete-blocked');
+                });
+                
+                console.log(`Test database delete result: ${deleteResult}`);
+                
+                const testDb = await new Promise((resolve, reject) => {
+                    const request = idb.open(testDbName, 1);
+                    
+                    request.onerror = () => {
+                        console.error('Test database open error:', request.error);
+                        reject(request.error);
+                    };
+                    
+                    request.onsuccess = () => {
+                        console.log('Test database opened successfully');
+                        resolve(request.result);
+                    };
+                    
+                    request.onupgradeneeded = (event) => {
+                        console.log('Test database upgrade needed');
+                        const db = event.target.result;
+                        db.createObjectStore('testStore', { keyPath: 'id' });
+                    };
+                });
+                
+                // Test 3: Try basic operations
+                const transaction = testDb.transaction(['testStore'], 'readwrite');
+                const store = transaction.objectStore('testStore');
+                
+                const testData = { id: 'test1', data: 'Hello IndexedDB', timestamp: Date.now() };
+                
+                await new Promise((resolve, reject) => {
+                    const addRequest = store.add(testData);
+                    addRequest.onsuccess = () => {
+                        console.log('Test data added successfully');
+                        resolve();
+                    };
+                    addRequest.onerror = () => {
+                        console.error('Test data add error:', addRequest.error);
+                        reject(addRequest.error);
+                    };
+                });
+                
+                const retrievedData = await new Promise((resolve, reject) => {
+                    const getRequest = store.get('test1');
+                    getRequest.onsuccess = () => {
+                        console.log('Test data retrieved:', getRequest.result);
+                        resolve(getRequest.result);
+                    };
+                    getRequest.onerror = () => {
+                        console.error('Test data get error:', getRequest.error);
+                        reject(getRequest.error);
+                    };
+                });
+                
+                testDb.close();
+                
+                // Clean up
+                await new Promise((resolve) => {
+                    const deleteReq = idb.deleteDatabase(testDbName);
+                    deleteReq.onsuccess = () => resolve();
+                    deleteReq.onerror = () => resolve();
+                });
+                
+                addResult('Basic IndexedDB Test', 'success', 
+                    `All basic operations successful! Retrieved data: ${JSON.stringify(retrievedData)}`,
+                    { deleteResult, testData, retrievedData }
+                );
+                
+            } catch (error) {
+                console.error('Basic IndexedDB test failed:', error);
+                addResult('Basic IndexedDB Test', 'error', 
+                    `Failed: ${error.message}`,
+                    { errorName: error.name, errorMessage: error.message, errorStack: error.stack }
+                );
+            }
+        }
+
+        async function testStorageManager() {
+            console.log('💾 Testing MeetingStorageManager...');
+            
+            try {
+                const storageManager = new MeetingStorageManager();
+                
+                console.log('Storage manager created, attempting initialization...');
+                await storageManager.init();
+                
+                if (!storageManager.db) {
+                    addResult('Storage Manager Test', 'error', 'Storage manager initialized but db is still null');
+                    return;
+                }
+                
+                console.log('Storage manager initialized successfully');
+                
+                // Test session operations
+                const testSession = {
+                    sessionId: `diagnostic_${Date.now()}`,
+                    meetingId: 'diagnostic-meeting',
+                    title: 'Diagnostic Test Session',
+                    startTime: Date.now() - 300000,
+                    endTime: Date.now(),
+                    participants: [
+                        { name: 'Test User', id: 'test1' }
+                    ],
+                    dataSource: 'diagnostic'
+                };
+                
+                console.log('Attempting to save test session...');
+                await storageManager.saveMeetingSession(testSession);
+                console.log('Test session saved successfully');
+                
+                console.log('Attempting to retrieve sessions...');
+                const sessions = await storageManager.getAllSessions();
+                console.log(`Retrieved ${sessions.length} sessions`);
+                
+                const meetingSessions = await storageManager.getMeetingSessions('diagnostic-meeting');
+                console.log(`Retrieved ${meetingSessions.length} sessions for diagnostic meeting`);
+                
+                addResult('Storage Manager Test', 'success', 
+                    `All operations successful! Total sessions: ${sessions.length}, Meeting sessions: ${meetingSessions.length}`,
+                    { 
+                        testSession,
+                        totalSessions: sessions.length,
+                        meetingSessions: meetingSessions.length,
+                        dbObjectStores: Array.from(storageManager.db.objectStoreNames)
+                    }
+                );
+                
+            } catch (error) {
+                console.error('Storage manager test failed:', error);
+                addResult('Storage Manager Test', 'error', 
+                    `Failed: ${error.message}`,
+                    { 
+                        errorName: error.name, 
+                        errorMessage: error.message, 
+                        errorStack: error.stack?.substring(0, 500)
+                    }
+                );
+            }
+        }
+
+        async function forceDatabaseRecreation() {
+            console.log('🔄 Forcing database recreation...');
+            
+            try {
+                const dbName = 'MeetingTrackerDB';
+                const idb = window.indexedDB || self.indexedDB;
+                
+                console.log(`Deleting existing database: ${dbName}`);
+                
+                const deleteResult = await new Promise((resolve, reject) => {
+                    const deleteReq = idb.deleteDatabase(dbName);
+                    
+                    deleteReq.onsuccess = () => {
+                        console.log('Database deleted successfully');
+                        resolve('success');
+                    };
+                    
+                    deleteReq.onerror = () => {
+                        console.error('Database delete error:', deleteReq.error);
+                        resolve('error');
+                    };
+                    
+                    deleteReq.onblocked = () => {
+                        console.warn('Database delete blocked - another tab may be open');
+                        resolve('blocked');
+                    };
+                    
+                    // Timeout after 10 seconds
+                    setTimeout(() => resolve('timeout'), 10000);
+                });
+                
+                console.log(`Database delete result: ${deleteResult}`);
+                
+                if (deleteResult === 'blocked') {
+                    addResult('Force Database Recreation', 'error', 
+                        'Database deletion was blocked. Please close all other tabs with the extension and try again.');
+                    return;
+                }
+                
+                // Wait a moment for cleanup
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Now try to create a new storage manager
+                console.log('Creating new storage manager...');
+                const storageManager = new MeetingStorageManager();
+                await storageManager.init();
+                
+                if (storageManager.db) {
+                    addResult('Force Database Recreation', 'success', 
+                        `Database recreated successfully! Object stores: ${Array.from(storageManager.db.objectStoreNames).join(', ')}`,
+                        { 
+                            deleteResult,
+                            dbVersion: storageManager.db.version,
+                            objectStores: Array.from(storageManager.db.objectStoreNames)
+                        }
+                    );
+                } else {
+                    addResult('Force Database Recreation', 'error', 
+                        'Database recreation failed - db is still null after initialization');
+                }
+                
+            } catch (error) {
+                console.error('Force database recreation failed:', error);
+                addResult('Force Database Recreation', 'error', 
+                    `Failed: ${error.message}`,
+                    { errorName: error.name, errorMessage: error.message }
+                );
+            }
+        }
+
+        async function runFullDiagnostic() {
+            console.log('🏥 Running full diagnostic...');
+            clearResults();
+            
+            addResult('Full Diagnostic Started', 'info', 'Running comprehensive database diagnostic...');
+            
+            // Environment info
+            const envInfo = {
+                userAgent: navigator.userAgent,
+                hasIndexedDB: !!(window.indexedDB || self.indexedDB),
+                hasWindow: typeof window !== 'undefined',
+                hasSelf: typeof self !== 'undefined',
+                location: window.location.href,
+                timestamp: new Date().toISOString()
+            };
+            
+            addResult('Environment Info', 'info', 'Browser and environment details', envInfo);
+            
+            // Run tests sequentially
+            await testBasicIndexedDB();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            await testStorageManager();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            addResult('Full Diagnostic Complete', 'success', 'All diagnostic tests completed. Check results above.');
+            showConsoleLog();
+        }
+
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            document.getElementById('console-log').style.display = 'none';
+            logContent = [];
+        }
+
+        // Auto-run basic test on load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                addResult('Diagnostic Tool Ready', 'info', 
+                    'Click "Run Full Diagnostic" to test the database system. This will help identify why your extension is seeing database errors.');
+            }, 500);
+        });
+    </script>
+</body>
+</html>

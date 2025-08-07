@@ -526,7 +526,7 @@ class MeetingStorageManager {
     
     // Save a meeting session (each join/leave cycle is a separate session)
     async saveMeetingSession(session) {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             try {
                 console.log(`💾 Saving meeting session:`, {
                     sessionId: session.sessionId,
@@ -535,6 +535,24 @@ class MeetingStorageManager {
                     endTime: session.endTime ? new Date(session.endTime).toISOString() : 'ongoing',
                     duration: session.endTime ? Math.round((session.endTime - session.startTime) / 60000) : 'ongoing'
                 });
+                
+                // Check if database is available
+                if (!this.db) {
+                    console.error('❌ Database not available in saveMeetingSession');
+                    console.log('🔄 Attempting to reinitialize database...');
+                    try {
+                        await this.init();
+                        if (!this.db) {
+                            console.error('❌ Database reinitialize failed in saveMeetingSession');
+                            reject(new Error('Database not available after reinitialize'));
+                            return;
+                        }
+                    } catch (initError) {
+                        console.error('❌ Database reinitialize error in saveMeetingSession:', initError);
+                        reject(initError);
+                        return;
+                    }
+                }
                 
                 const transaction = this.db.transaction(['meetingSessions', 'meetingMinutes', 'participants'], 'readwrite');
                 const sessionStore = transaction.objectStore('meetingSessions');

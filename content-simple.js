@@ -1135,17 +1135,25 @@ class SimpleMeetTracker {
     
     // Track when user switches tabs/windows
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && this.meetingState.isActive) {
+      const isVisible = document.visibilityState === 'visible';
+      console.log(`[SimpleMeetTracker] Tab visibility changed: ${isVisible ? 'visible' : 'hidden'}`);
+      
+      if (isVisible && this.meetingState.isActive) {
         console.log('[SimpleMeetTracker] Tab became visible - checking meeting state');
         setTimeout(() => {
           this.scanForParticipants();
           this.updateMeetingState();
         }, 1000);
+      } else if (!isVisible && this.meetingState.isActive) {
+        console.log('[SimpleMeetTracker] Tab became hidden - continuing background tracking');
+        // Don't stop tracking, just note the visibility change
+        // Background tracking will continue via the background script
       }
     });
     
     // Track window focus changes
     window.addEventListener('focus', () => {
+      console.log('[SimpleMeetTracker] Window focused');
       if (this.meetingState.isActive) {
         console.log('[SimpleMeetTracker] Window focused - checking meeting state');
         setTimeout(() => {
@@ -1153,6 +1161,11 @@ class SimpleMeetTracker {
           this.updateMeetingState();
         }, 500);
       }
+    });
+    
+    window.addEventListener('blur', () => {
+      console.log('[SimpleMeetTracker] Window blurred');
+      // Continue tracking even when window loses focus
     });
     
     // Track beforeunload (page about to close)

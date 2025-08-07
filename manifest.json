@@ -5,8 +5,9 @@
   "description": "Track Google Meet participants and duration with network-based detection",
   "permissions": [
     "storage",
-    "activeTab",
-    "scripting"
+    "tabs",
+    "scripting",
+    "background"
   ],
   "host_permissions": [
     "*://meet.google.com/*",

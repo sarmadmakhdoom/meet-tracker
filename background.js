@@ -1364,7 +1364,38 @@ async function detectAndCleanupZombieMeetings() {
         
         for (const tab of tabs) {
             try {
-                console.log(`🔍 Checking tab ${tab.id}: ${tab.url}`);
+                console.log(`🔍 Checking tab ${tab.id}: ${tab.url} (active: ${tab.active})`);
+                
+                // For background tabs, try to inject content script if needed
+                if (!tab.active) {
+                    console.log(`📋 Tab ${tab.id} is in background - ensuring content script is active`);
+                    try {
+                        // Try to ping the content script first
+                        await new Promise((resolve, reject) => {
+                            chrome.tabs.sendMessage(tab.id, { type: 'ping' }, (response) => {
+                                if (chrome.runtime.lastError) {
+                                    reject(new Error('Content script not responding'));
+                                } else {
+                                    resolve(response);
+                                }
+                            });
+                        });
+                    } catch (pingError) {
+                        console.log(`📋 Content script not responding in tab ${tab.id}, trying to inject...`);
+                        try {
+                            await chrome.scripting.executeScript({
+                                target: { tabId: tab.id },
+                                files: ['content-simple.js']
+                            });
+                            console.log(`✅ Injected content script into background tab ${tab.id}`);
+                            // Give it a moment to initialize
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } catch (injectError) {
+                            console.log(`❌ Failed to inject into tab ${tab.id}:`, injectError.message);
+                            continue;
+                        }
+                    }
+                }
                 
                 // Send message to content script to get meeting state
                 const response = await new Promise((resolve) => {
@@ -1381,13 +1412,14 @@ async function detectAndCleanupZombieMeetings() {
                     console.log(`📊 Tab ${tab.id} meeting state:`, {
                         isActive: meetingState.isActive,
                         meetingId: meetingState.meetingId,
-                        participantCount: participantCount || 0
+                        participantCount: participantCount || 0,
+                        tabActive: tab.active
                     });
                     
                     // Check if this tab has an active meeting
                     if (meetingState.isActive && meetingState.meetingId) {
                         activeMeetingFound = true;
-                        console.log(`✅ Found active meeting in tab ${tab.id}: ${meetingState.meetingId}`);
+                        console.log(`✅ Found active meeting in tab ${tab.id}: ${meetingState.meetingId} (tab active: ${tab.active})`);
                         
                         // Update our current meeting state with fresh data if it matches
                         if (currentMeetingState.currentMeeting.id === meetingState.meetingId) {
