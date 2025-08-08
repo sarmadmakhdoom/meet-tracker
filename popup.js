@@ -61,22 +61,37 @@ function getCurrentMeetingState() {
     return new Promise((resolve) => {
         try {
             if (!chrome.runtime || !chrome.runtime.id) {
+                console.log('🔍 [POPUP DEBUG] Chrome runtime not available');
                 resolve({ state: 'none', participants: [], currentMeeting: null });
                 return;
             }
             
+            console.log('🔍 [POPUP DEBUG] Requesting active session from background...');
+            
             // Use the new session-based data from background
             chrome.runtime.sendMessage({ action: 'getActiveSession' }, (response) => {
                 if (chrome.runtime.lastError) {
-                    console.log('Extension context invalidated:', chrome.runtime.lastError.message);
+                    console.log('🔍 [POPUP DEBUG] Extension context invalidated:', chrome.runtime.lastError.message);
                     resolve({ state: 'none', participants: [], currentMeeting: null });
                     return;
                 }
                 
+                console.log('🔍 [POPUP DEBUG] Background response received:', {
+                    hasResponse: !!response,
+                    state: response?.state,
+                    hasCurrentMeeting: !!response?.currentMeeting,
+                    currentMeetingId: response?.currentMeeting?.id,
+                    sessionId: response?.currentMeeting?.sessionId,
+                    startTime: response?.currentMeeting?.startTime,
+                    duration: response?.currentMeeting?.duration,
+                    participantCount: response?.participants?.length || 0,
+                    fullResponse: response
+                });
+                
                 if (response && response.state === 'active') {
                     // Use session-based data directly
                     resolve(response);
-                    console.log('🕐 Using session-based meeting data for popup:', {
+                    console.log('🔍 [POPUP DEBUG] Using session-based meeting data for popup:', {
                         meetingId: response.currentMeeting?.id,
                         sessionId: response.currentMeeting?.sessionId,
                         sessionDuration: Math.round((response.currentMeeting?.duration || 0) / 60000),
@@ -167,6 +182,18 @@ function updateCurrentMeetingInfo(meeting, participants) {
     const currentDuration = document.getElementById('current-duration');
     const currentParticipants = document.getElementById('current-participants');
     
+    console.log('🔍 [POPUP DEBUG] updateCurrentMeetingInfo called with:', {
+        hasMeeting: !!meeting,
+        meetingId: meeting?.id,
+        hasStartTime: !!meeting?.startTime,
+        isSession: meeting?.isSession,
+        hasDuration: !!meeting?.duration,
+        duration: meeting?.duration,
+        sessionId: meeting?.sessionId,
+        participantCount: participants?.length || 0,
+        fullMeeting: meeting
+    });
+    
     if (meeting && meeting.startTime) {
         const startTime = new Date(meeting.startTime);
         
@@ -175,7 +202,7 @@ function updateCurrentMeetingInfo(meeting, participants) {
         if (meeting.isSession && meeting.duration) {
             // Use the precise session duration from the background
             durationMs = meeting.duration;
-            console.log('📅 Using session-based duration:', {
+            console.log('🔍 [POPUP DEBUG] Using session-based duration:', {
                 sessionId: meeting.sessionId,
                 sessionStartTime: startTime.toISOString(),
                 sessionDurationMs: durationMs,
@@ -185,11 +212,13 @@ function updateCurrentMeetingInfo(meeting, participants) {
             // Fallback to calculating from start time
             const now = new Date();
             durationMs = now - startTime;
-            console.log('📅 Calculating duration from start time:', {
+            console.log('🔍 [POPUP DEBUG] Calculating duration from start time (fallback):', {
                 startTime: startTime.toISOString(),
                 now: now.toISOString(),
                 durationMs,
-                durationMinutes: Math.floor(durationMs / (1000 * 60))
+                durationMinutes: Math.floor(durationMs / (1000 * 60)),
+                isSession: meeting?.isSession,
+                hasDurationField: !!meeting?.duration
             });
         }
         

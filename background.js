@@ -552,8 +552,17 @@ function updateIcon(state, participants, hasNetworkData = false) {
 // Get active session data for popup
 async function getActiveSessionData() {
     try {
+        console.log('🔍 [BACKGROUND DEBUG] getActiveSessionData called:', {
+            currentState: currentMeetingState.state,
+            hasCurrentMeeting: !!currentMeetingState.currentMeeting,
+            currentMeetingId: currentMeetingState.currentMeeting?.id,
+            activeSessions: Object.keys(activeSessions),
+            meetingToSessionMap: Object.keys(meetingToSessionMap)
+        });
+        
         // Check if we have any active session
         if (currentMeetingState.state !== 'active' || !currentMeetingState.currentMeeting) {
+            console.log('🔍 [BACKGROUND DEBUG] No active meeting state, returning none');
             return {
                 state: 'none',
                 participants: [],
@@ -565,8 +574,18 @@ async function getActiveSessionData() {
         const sessionId = meetingToSessionMap[meetingId];
         const activeSession = sessionId ? activeSessions[sessionId] : null;
         
+        console.log('🔍 [BACKGROUND DEBUG] Session lookup:', {
+            meetingId,
+            sessionId,
+            hasActiveSession: !!activeSession,
+            sessionStartTime: activeSession?.startTime,
+            sessionTitle: activeSession?.title
+        });
+        
         if (!activeSession) {
             console.warn(`⚠️ No active session found for meeting ${meetingId}`);
+            console.warn('Available sessions:', Object.keys(activeSessions));
+            console.warn('Meeting to session mapping:', meetingToSessionMap);
             return {
                 state: 'none',
                 participants: [],
@@ -577,10 +596,20 @@ async function getActiveSessionData() {
         // Calculate current session duration
         const currentSessionDuration = Date.now() - activeSession.startTime;
         
+        console.log('🔍 [BACKGROUND DEBUG] Session data for popup:', {
+            sessionId: activeSession.sessionId,
+            meetingId: activeSession.meetingId,
+            title: activeSession.title,
+            startTime: new Date(activeSession.startTime).toISOString(),
+            duration: currentSessionDuration,
+            durationMinutes: Math.round(currentSessionDuration / 60000),
+            participantCount: (currentMeetingState.participants || activeSession.participants || []).length
+        });
+        
         // Return session-based data formatted for popup
-        return {
+        const sessionData = {
             state: 'active',
-            participants: currentMeetingState.participants || activeSession.participants,
+            participants: currentMeetingState.participants || activeSession.participants || [],
             currentMeeting: {
                 id: activeSession.meetingId,
                 title: activeSession.title,
@@ -590,9 +619,12 @@ async function getActiveSessionData() {
                 duration: currentSessionDuration,
                 isSession: true // Flag to indicate this is session-based data
             },
-            networkParticipants: currentMeetingState.networkParticipants,
-            avatarCount: currentMeetingState.avatarCount
+            networkParticipants: currentMeetingState.networkParticipants || 0,
+            avatarCount: currentMeetingState.avatarCount || 0
         };
+        
+        console.log('🔍 [BACKGROUND DEBUG] Returning session data to popup:', sessionData);
+        return sessionData;
         
     } catch (error) {
         console.error('❌ Error getting active session data:', error);
