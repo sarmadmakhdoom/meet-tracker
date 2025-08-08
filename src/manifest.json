@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Google Meet Tracker (Network Enhanced)",
-  "version": "2.0.1",
-  "description": "Enhanced meeting tracker with network monitoring",
+  "name": "Google Meet Tracker - Redesigned",
+  "version": "2.0.0",
+  "description": "Clean, modular meeting tracker with proper Meeting-Session relationship",
   "permissions": [
     "storage",
     "tabs",
@@ -13,12 +13,12 @@
     "*://meet.google.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-entry.js"
   },
   "content_scripts": [
     {
       "matches": ["*://meet.google.com/*"],
-      "js": ["content-simple.js"],
+      "js": ["content-entry.js"],
       "run_at": "document_start"
     }
   ],
@@ -30,5 +30,11 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }

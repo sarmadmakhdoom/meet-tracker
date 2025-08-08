@@ -987,7 +987,7 @@ function updateParticipantsSummary() {
     container.innerHTML = sorted.map(([name, count]) => `
         <div class="participant-item">
             <span class="participant-name">${escapeHtml(name)}</span>
-            <span class="participant-count">${count} meetings</span>
+            <span class="participant-count">${count} sessions</span>
         </div>
     `).join('');
 }
@@ -1037,8 +1037,8 @@ function updateMeetingsTable() {
     const paginationContainer = document.getElementById('pagination-container');
     
     if (filteredMeetings.length === 0) {
-        tbody.innerHTML = '<tr class="loading-row"><td colspan="6">No meetings found</td></tr>';
-        countEl.textContent = '0 meetings';
+        tbody.innerHTML = '<tr class="loading-row"><td colspan="6">No sessions found</td></tr>';
+        countEl.textContent = '0 sessions';
         paginationContainer.style.display = 'none';
         return;
     }
@@ -1684,7 +1684,7 @@ function updatePaginationControls() {
     // Update info text
     const startIndex = (currentPage - 1) * pageSize + 1;
     const endIndex = Math.min(currentPage * pageSize, filteredMeetings.length);
-    paginationInfo.textContent = `Showing ${startIndex}-${endIndex} of ${filteredMeetings.length} meetings`;
+    paginationInfo.textContent = `Showing ${startIndex}-${endIndex} of ${filteredMeetings.length} sessions`;
     
     // Update navigation buttons
     firstPageBtn.disabled = currentPage === 1;

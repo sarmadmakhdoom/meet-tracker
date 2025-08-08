@@ -18,6 +18,9 @@ let sessionDataLoaded = false; // Flag to track if we've loaded persistent data
 // Initialize storage manager
 let storageManager = null;
 
+// Periodic session auto-save timer
+let autoSaveTimer = null;
+
 console.log('🌐 Network-enhanced Google Meet Tracker background loaded');
 
 // Initialize extension
@@ -100,9 +103,10 @@ async function setupNetworkMonitoring() {
 
 // Handle messages from content script
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log(`📬 Background received: "${request.type || request.action}"`);
-    
     const messageType = request.type || request.action;
+    const timestamp = new Date().toISOString();
+    
+    console.log(`🔍 [${timestamp}] Background received: "${messageType}" from tab ${sender.tab?.id}`);
     
     // Handle async operations
     const handleAsync = async () => {
@@ -292,14 +296,16 @@ async function handleMeetingEnded(meeting, sender) {
 // Handle participants update from network interception (SESSION-BASED APPROACH)
 async function handleParticipantsUpdate(data, sender) {
     const { meetingId, meetingTitle, participants } = data;
+    const timestamp = new Date().toISOString();
     
     // Analyze data sources
     const networkParticipants = participants.filter(p => p.source?.includes('sync') || p.source?.includes('network')).length;
     const domParticipants = participants.filter(p => p.source?.includes('dom')).length;
     const avatarCount = participants.filter(p => p.avatarUrl).length;
     
-    console.log(`💶 Participants update: ${participants.length} participants in ${meetingId}`);
+    console.log(`🔍 [${timestamp}] PARTICIPANTS UPDATE: ${participants.length} participants in ${meetingId}`);
     console.log(`   Network: ${networkParticipants}, DOM: ${domParticipants}, Avatars: ${avatarCount}`);
+    console.log(`   Meeting title: "${meetingTitle}", Tab ID: ${sender.tab?.id}`);
     
     // Ensure we've loaded persistent session data on first access
     await ensureSessionDataLoaded();
@@ -308,10 +314,10 @@ async function handleParticipantsUpdate(data, sender) {
     const currentSessionId = meetingToSessionMap[meetingId];
     let activeSession = currentSessionId ? activeSessions[currentSessionId] : null;
     
-    // ENHANCED: If no session in memory, aggressively check storage for ongoing sessions
+    // SIMPLIFIED: If no session in memory, create a new session (no restoration)
     if (!activeSession) {
-        console.log(`🔍 No active session in memory for meeting ${meetingId}, checking storage and creating/continuing session`);
-        activeSession = await findOrCreateSession(meetingId, meetingTitle, participants, sender, networkParticipants);
+        console.log(`🔍 No active session in memory for meeting ${meetingId}, creating NEW session`);
+        activeSession = await createNewSession(meetingId, meetingTitle, participants, sender, networkParticipants);
         
         // Log session recovery for debugging
         if (activeSession && activeSession.continued) {
@@ -696,71 +702,14 @@ async function ensureSessionDataLoaded() {
     }
 }
 
-// Find existing session or create new one for a meeting
-async function findOrCreateSession(meetingId, meetingTitle, participants, sender, networkParticipants) {
+// Always create a new session for each meeting join (SESSION-BASED TRACKING)
+// This ensures accurate session-based tracking where each join = new session
+async function createNewSession(meetingId, meetingTitle, participants, sender, networkParticipants) {
     try {
-        // First check if there's a recent session for this meeting in storage
         const storage = await ensureStorageManager();
-        if (storage) {
-            const recentSessions = await storage.getMeetingSessions(meetingId);
-            const ongoingSession = recentSessions.find(session => !session.endTime);
-            
-            if (ongoingSession) {
-                console.log(`🔄 Found ongoing session in storage: ${ongoingSession.sessionId}`);
-                console.log(`   Session was last updated: ${ongoingSession.lastUpdated ? new Date(ongoingSession.lastUpdated).toISOString() : 'never'}`);
-                
-                // Restore to memory with session recovery markers
-                activeSessions[ongoingSession.sessionId] = {
-                    ...ongoingSession,
-                    isActive: true,
-                    participants: participants, // Update with current participants
-                    lastUpdated: Date.now(),
-                    minuteLogs: ongoingSession.minuteLogs || [],
-                    continued: true, // Mark as continued session
-                    recovered: true, // Mark as recovered from storage
-                    recoveredAt: Date.now()
-                };
-                meetingToSessionMap[meetingId] = ongoingSession.sessionId;
-                
-                console.log(`✅ Session ${ongoingSession.sessionId} restored to memory (${Math.round((Date.now() - ongoingSession.startTime) / 60000)}m total duration)`);
-                return activeSessions[ongoingSession.sessionId];
-            }
-            
-            // EXTENDED RECOVERY: Check for recently ended sessions (within 15 minutes instead of 10)
-            const recentSession = recentSessions
-                .filter(session => session.endTime && (Date.now() - session.endTime) < (15 * 60 * 1000))
-                .sort((a, b) => b.endTime - a.endTime)[0];
-            
-            if (recentSession) {
-                const gapMinutes = Math.round((Date.now() - recentSession.endTime) / 60000);
-                console.log(`🔄 Continuing recent session: ${recentSession.sessionId} (ended ${gapMinutes} minutes ago)`);
-                
-                // Create a new session that continues from the recent one
-                const sessionId = storage.generateSessionId();
-                const activeSession = {
-                    sessionId: sessionId,
-                    meetingId: meetingId,
-                    title: meetingTitle || recentSession.title || meetingId,
-                    participants: participants,
-                    startTime: recentSession.startTime, // Continue with original start time
-                    endTime: null,
-                    isActive: true,
-                    minuteLogs: recentSession.minuteLogs || [],
-                    url: sender.tab?.url,
-                    dataSource: networkParticipants > 0 ? 'network' : 'dom',
-                    continued: true,
-                    originalSessionId: recentSession.sessionId,
-                    gapDuration: Date.now() - recentSession.endTime, // Track gap duration
-                    lastUpdated: Date.now()
-                };
-                
-                activeSessions[sessionId] = activeSession;
-                meetingToSessionMap[meetingId] = sessionId;
-                
-                console.log(`✅ Session continued from ${recentSession.sessionId} with ${gapMinutes}m gap (total: ${Math.round((Date.now() - recentSession.startTime) / 60000)}m)`);
-                return activeSession;
-            }
-        }
+        
+        // ALWAYS create a completely new session - no restoration or continuation
+        // This is the correct approach for session-based tracking
         
         // No existing session found, create a new one
         const sessionId = storage ? storage.generateSessionId() : `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -784,6 +733,17 @@ async function findOrCreateSession(meetingId, meetingTitle, participants, sender
         
         activeSessions[sessionId] = activeSession;
         meetingToSessionMap[meetingId] = sessionId;
+        
+        // CRITICAL: Save new session to database immediately
+        try {
+            const storage = await ensureStorageManager();
+            if (storage) {
+                await storage.saveMeetingSession(activeSession);
+                console.log(`💾 IMMEDIATE SAVE: New session ${sessionId} saved to IndexedDB`);
+            }
+        } catch (error) {
+            console.error('❌ IMMEDIATE SAVE ERROR: Failed to save new session:', error.message);
+        }
         
         return activeSession;
         
@@ -1031,7 +991,7 @@ async function getMeetings() {
     }
 }
 
-// Get sessions for dashboard display
+// Get sessions for dashboard display (DATABASE ONLY)
 async function getSessions() {
     try {
         const storage = await ensureStorageManager();
@@ -1040,17 +1000,16 @@ async function getSessions() {
             return [];
         }
         
-        // Get all completed sessions from storage
-        const completedSessions = await storage.getAllSessions();
+        // FIXED: Only get sessions from database, not from memory
+        // Dashboard should show persistent data only
+        const allSessions = await storage.getAllSessions();
         
-        // Get active sessions from memory
-        const activeSessionsList = Object.values(activeSessions).filter(session => session.isActive);
+        console.log(`📊 Found ${allSessions.length} total sessions in database`);
         
-        console.log(`📊 Found ${completedSessions.length} completed sessions and ${activeSessionsList.length} active sessions`);
-        
-        // Convert completed sessions format
-        const formattedCompletedSessions = completedSessions.map(session => {
-            const duration = session.endTime ? (session.endTime - session.startTime) : 0;
+        // Convert sessions to dashboard format
+        const formattedSessions = allSessions.map(session => {
+            const duration = session.endTime ? (session.endTime - session.startTime) : (Date.now() - session.startTime);
+            const isActive = !session.endTime; // No end time = still active
             
             return {
                 id: session.sessionId,
@@ -1063,35 +1022,19 @@ async function getSessions() {
                 url: session.url,
                 sessionId: session.sessionId,
                 isSession: true,
-                isActive: false // Mark as completed
-            };
-        });
-        
-        // Convert active sessions format
-        const formattedActiveSessions = activeSessionsList.map(session => {
-            const currentDuration = Date.now() - session.startTime;
-            
-            return {
-                id: session.sessionId,
-                meetingId: session.meetingId,
-                title: session.title || session.meetingId,
-                startTime: session.startTime,
-                endTime: null, // No end time for active sessions
-                duration: currentDuration, // Current duration so far
-                participants: session.participants || [],
-                url: session.url,
-                sessionId: session.sessionId,
-                isSession: true,
-                isActive: true, // Mark as currently active
+                isActive: isActive,
                 dataSource: session.dataSource || 'unknown'
             };
         });
         
-        // Combine active and completed sessions, with active sessions first
-        const allSessions = [...formattedActiveSessions, ...formattedCompletedSessions];
+        // Sort by start time, most recent first
+        formattedSessions.sort((a, b) => b.startTime - a.startTime);
         
-        console.log(`📊 Retrieved ${allSessions.length} total sessions for dashboard (${formattedActiveSessions.length} active, ${formattedCompletedSessions.length} completed)`);
-        return allSessions;
+        const activeSessions = formattedSessions.filter(s => s.isActive).length;
+        const completedSessions = formattedSessions.length - activeSessions;
+        
+        console.log(`📊 Retrieved ${formattedSessions.length} total sessions for dashboard (${activeSessions} active, ${completedSessions} completed)`);
+        return formattedSessions;
     } catch (error) {
         console.error('❌ Error getting sessions from IndexedDB:', error);
         return [];
@@ -1639,6 +1582,102 @@ self.debugMeetingTracker = {
     }
 };
 
+// PERIODIC SESSION AUTO-SAVE AND HEARTBEAT
+// This prevents session data loss if the background service worker is terminated
+
+// Periodic auto-save function
+async function periodicSessionAutoSave() {
+    try {
+        const activeSessionsList = Object.values(activeSessions).filter(session => session.isActive);
+        
+        if (activeSessionsList.length === 0) {
+            console.log('⏰ Auto-save: No active sessions to save');
+            return;
+        }
+        
+        console.log(`⏰ AUTO-SAVE: Saving ${activeSessionsList.length} active sessions to IndexedDB...`);
+        
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available for auto-save');
+            return;
+        }
+        
+        let savedCount = 0;
+        let errorCount = 0;
+        
+        for (const session of activeSessionsList) {
+            try {
+                // Update last saved timestamp
+                session.lastAutoSaved = Date.now();
+                
+                await storage.saveMeetingSession(session);
+                savedCount++;
+                
+                console.log(`✅ Auto-saved session: ${session.sessionId} (${session.title})`);
+            } catch (error) {
+                errorCount++;
+                console.error(`❌ Auto-save failed for session ${session.sessionId}:`, error.message);
+            }
+        }
+        
+        console.log(`⏰ AUTO-SAVE COMPLETE: ${savedCount} sessions saved, ${errorCount} errors`);
+        
+        // Log current session status for debugging
+        activeSessionsList.forEach(session => {
+            const duration = Math.round((Date.now() - session.startTime) / 60000);
+            console.log(`📊 Active session: ${session.sessionId} - ${session.title} (${duration}m duration)`);
+        });
+        
+    } catch (error) {
+        console.error('❌ Error during periodic auto-save:', error);
+    }
+}
+
+// Start periodic auto-save timer (runs every 30 seconds)
+function startAutoSaveTimer() {
+    if (autoSaveTimer) {
+        clearInterval(autoSaveTimer);
+    }
+    
+    // Run immediately, then every 30 seconds
+    periodicSessionAutoSave();
+    
+    autoSaveTimer = setInterval(periodicSessionAutoSave, 30 * 1000); // 30 seconds
+    
+    console.log('⏰ Started periodic session auto-save timer (30 second intervals)');
+}
+
+// Stop auto-save timer
+function stopAutoSaveTimer() {
+    if (autoSaveTimer) {
+        clearInterval(autoSaveTimer);
+        autoSaveTimer = null;
+        console.log('⏰ Stopped periodic session auto-save timer');
+    }
+}
+
+// Heartbeat to keep service worker alive
+const HEARTBEAT_INTERVAL = 20 * 1000; // 20 seconds
+let heartbeatTimer = null;
+
+function startHeartbeat() {
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+    }
+    
+    heartbeatTimer = setInterval(() => {
+        console.log(`💓 Service worker heartbeat - ${Object.keys(activeSessions).length} active sessions`);
+    }, HEARTBEAT_INTERVAL);
+    
+    console.log('💓 Started service worker heartbeat');
+}
+
+// Initialize auto-save and heartbeat on background startup
+startAutoSaveTimer();
+startHeartbeat();
+
 // Debug info
 console.log('🌐 Network-enhanced Google Meet Tracker background service ready');
 console.log('🔧 Debug functions available: self.debugMeetingTracker');
+console.log('⏰ Periodic session auto-save and heartbeat initialized');

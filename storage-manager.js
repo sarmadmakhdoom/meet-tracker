@@ -212,8 +212,60 @@ class MeetingStorageManager {
         });
     }
 
-    // Get meetings with advanced filtering
+    // FIXED: Get meetings with proper session-based data structure
     async getMeetings(options = {}) {
+        console.log('📊 getMeetings called - redirecting to session-based data');
+        
+        try {
+            // Get all sessions and convert to meeting-like format for dashboard compatibility
+            const sessions = await this.getAllSessions(options);
+            
+            // Convert sessions to meeting format that dashboard expects
+            const meetings = sessions.map(session => {
+                // Calculate duration properly
+                const duration = session.endTime ? 
+                    (session.endTime - session.startTime) : 
+                    (session.duration || (Date.now() - session.startTime));
+                    
+                return {
+                    // Dashboard expects these fields
+                    id: session.sessionId,
+                    meetingId: session.meetingId,
+                    title: session.title || session.meetingId,
+                    startTime: session.startTime,
+                    endTime: session.endTime,
+                    duration: duration,
+                    participants: session.participants || [],
+                    url: session.url,
+                    
+                    // Session-specific fields
+                    sessionId: session.sessionId,
+                    isSession: true,
+                    isActive: !session.endTime,
+                    dataSource: session.dataSource || 'unknown',
+                    endReason: session.endReason,
+                    
+                    // Computed fields
+                    participantCount: session.participants ? session.participants.length : 0,
+                    durationMinutes: Math.round(duration / 60000),
+                    date: new Date(session.startTime).toISOString().split('T')[0]
+                };
+            });
+            
+            console.log(`📊 Converted ${sessions.length} sessions to meeting format for dashboard`);
+            return meetings;
+            
+        } catch (error) {
+            console.error('❌ Error in getMeetings (session-based):', error);
+            
+            // Fallback to old meetings table if session approach fails
+            console.log('🔄 Falling back to old meetings table...');
+            return this.getOldMeetings(options);
+        }
+    }
+    
+    // Keep old meeting method as fallback
+    async getOldMeetings(options = {}) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['meetings'], 'readonly');
             const store = transaction.objectStore('meetings');
@@ -221,21 +273,29 @@ class MeetingStorageManager {
             let request;
             
             if (options.dateRange) {
-                // Use date index for efficient date range queries
                 const keyRange = IDBKeyRange.bound(options.dateRange.start, options.dateRange.end);
                 request = store.index('date').getAll(keyRange);
             } else if (options.participant) {
-                // Use participant index for participant-specific queries
                 request = store.index('participants').getAll(options.participant);
             } else {
-                // Get all meetings
                 request = store.getAll();
             }
 
             request.onsuccess = () => {
                 let meetings = request.result;
                 
-                // Apply additional filters
+                // FIX: Add proper duration calculation for old meetings
+                meetings = meetings.map(meeting => ({
+                    ...meeting,
+                    duration: meeting.endTime ? 
+                        (meeting.endTime - meeting.startTime) : 
+                        (meeting.duration || (Date.now() - meeting.startTime)),
+                    isActive: !meeting.endTime,
+                    durationMinutes: meeting.endTime ? 
+                        Math.round((meeting.endTime - meeting.startTime) / 60000) : 
+                        Math.round((Date.now() - meeting.startTime) / 60000)
+                }));
+                
                 if (options.limit) {
                     meetings = meetings.slice(0, options.limit);
                 }
