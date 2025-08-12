@@ -502,17 +502,28 @@ class DiagnosticTracker {
                 '48': 'icons/icon48.png',
                 '128': 'icons/icon128.png'
             };
-            badgeText = '';
+            badgeText = '';  // Explicitly set to empty string
             badgeColor = '#4285f4';
             title = 'DIAGNOSTIC: Not in a meeting';
         }
         
-        chrome.action.setIcon({ path: iconPath });
-        chrome.action.setBadgeText({ text: badgeText });
-        chrome.action.setBadgeBackgroundColor({ color: badgeColor });
-        chrome.action.setTitle({ title });
-        
-        this.log('ICON UPDATED', { isActive, participantCount });
+        // Update icon with explicit error handling and badge clearing
+        try {
+            chrome.action.setIcon({ path: iconPath });
+            chrome.action.setBadgeText({ text: badgeText });
+            chrome.action.setBadgeBackgroundColor({ color: badgeColor });
+            chrome.action.setTitle({ title });
+            
+            this.log('ICON UPDATED', { isActive, participantCount, badgeText: `"${badgeText}"` });
+        } catch (error) {
+            this.log('ICON UPDATE ERROR', { error: error.message });
+            // Try to at least clear the badge if there's an error
+            try {
+                chrome.action.setBadgeText({ text: '' });
+            } catch (badgeError) {
+                this.log('BADGE CLEAR ERROR', { error: badgeError.message });
+            }
+        }
     }
     
     getActiveSessionForPopup() {

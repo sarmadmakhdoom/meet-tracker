@@ -536,23 +536,37 @@ function updateIcon(state, participants, hasNetworkData = false) {
             title = 'Waiting in meeting lobby';
             break;
             
+        case 'inactive':
+        case 'none':
         default:
             iconPath = {
                 '16': 'icons/icon16.png',
                 '48': 'icons/icon48.png',
                 '128': 'icons/icon128.png'
             };
+            badgeText = '';  // Explicitly clear the badge
+            badgeColor = '#4285f4';
             title = 'Not in a meeting';
             break;
     }
     
-    // Update icon
-    chrome.action.setIcon({ path: iconPath });
-    chrome.action.setBadgeText({ text: badgeText });
-    chrome.action.setBadgeBackgroundColor({ color: badgeColor });
-    chrome.action.setTitle({ title });
-    
-    console.log(`✅ Icon updated: ${title}`);
+    // Update icon with explicit error handling
+    try {
+        chrome.action.setIcon({ path: iconPath });
+        chrome.action.setBadgeText({ text: badgeText });
+        chrome.action.setBadgeBackgroundColor({ color: badgeColor });
+        chrome.action.setTitle({ title });
+        
+        console.log(`✅ Icon updated: ${title} (badge: "${badgeText}")`);
+    } catch (error) {
+        console.error('❌ Error updating icon:', error);
+        // Try to at least clear the badge if there's an error
+        try {
+            chrome.action.setBadgeText({ text: '' });
+        } catch (badgeError) {
+            console.error('❌ Error clearing badge:', badgeError);
+        }
+    }
 }
 
 // Get active session data for popup
@@ -1673,6 +1687,40 @@ function startHeartbeat() {
     console.log('💓 Started service worker heartbeat');
 }
 
+// Periodic badge sync function to ensure badges stay accurate
+async function periodicBadgeSync() {
+    try {
+        const tabs = await chrome.tabs.query({ url: 'https://meet.google.com/*' });
+        const hasActiveMeeting = currentMeetingState.state === 'active';
+        const participantCount = hasActiveMeeting ? (currentMeetingState.participants?.length || 0) : 0;
+        
+        if (tabs.length === 0 && hasActiveMeeting) {
+            // No Meet tabs but we think there's an active meeting - clean up
+            console.log('🧹 Badge sync: No Meet tabs found but extension shows active meeting - cleaning up');
+            currentMeetingState = {
+                state: 'none',
+                participants: [],
+                currentMeeting: null,
+                networkParticipants: 0
+            };
+            updateIcon('none', []);
+        } else if (hasActiveMeeting) {
+            // Ensure badge reflects current participant count
+            console.log(`🔄 Badge sync: Confirming badge shows ${participantCount} participants`);
+            updateIcon('active', currentMeetingState.participants || [], currentMeetingState.networkParticipants > 0);
+        } else {
+            // Ensure badge is cleared when not in meeting
+            console.log('🔄 Badge sync: Ensuring badge is cleared (not in meeting)');
+            updateIcon('none', []);
+        }
+    } catch (error) {
+        console.error('❌ Error during periodic badge sync:', error);
+    }
+}
+
+// Start periodic badge sync (every 30 seconds)
+setInterval(periodicBadgeSync, 30 * 1000);
+
 // Initialize auto-save and heartbeat on background startup
 startAutoSaveTimer();
 startHeartbeat();
@@ -1680,4 +1728,4 @@ startHeartbeat();
 // Debug info
 console.log('🌐 Network-enhanced Google Meet Tracker background service ready');
 console.log('🔧 Debug functions available: self.debugMeetingTracker');
-console.log('⏰ Periodic session auto-save and heartbeat initialized');
+console.log('⏰ Periodic session auto-save, heartbeat, and badge sync initialized');
