@@ -279,6 +279,12 @@ function setupEventListeners() {
     document.getElementById('meeting-modal').addEventListener('click', (e) => {
         if (e.target.id === 'meeting-modal') closeModal();
     });
+    
+    // Side overlay event listeners
+    document.getElementById('side-overlay-close').addEventListener('click', closeSideOverlay);
+    document.getElementById('side-overlay').addEventListener('click', (e) => {
+        if (e.target.id === 'side-overlay') closeSideOverlay();
+    });
 
     // Storage management event listeners (with error handling)
     const storageStatsBtn = document.getElementById('show-storage-stats');
@@ -602,9 +608,12 @@ function renderDailyTimeChart() {
 function renderCollaboratorsChart() {
     const participantData = {};
     
-    // Calculate meetings and total duration for each participant
+    // Calculate detailed meeting data for each participant
     filteredMeetings.forEach(meeting => {
         if (meeting.participants && Array.isArray(meeting.participants)) {
+            const meetingSize = meeting.participants.length;
+            const duration = meeting.endTime ? (meeting.endTime - meeting.startTime) : 0;
+            
             meeting.participants.forEach(p => {
                 // Handle different participant data formats
                 let participantName = '';
@@ -616,10 +625,45 @@ function renderCollaboratorsChart() {
                 
                 if (participantName && participantName !== 'Unknown') {
                     if (!participantData[participantName]) {
-                        participantData[participantName] = { meetings: 0, totalDuration: 0 };
+                        participantData[participantName] = { 
+                            meetings: 0, 
+                            totalDuration: 0,
+                            oneOnOne: { count: 0, duration: 0 },
+                            smallGroup: { count: 0, duration: 0 }, // 3-5 people
+                            mediumGroup: { count: 0, duration: 0 }, // 6-10 people
+                            largeGroup: { count: 0, duration: 0 }, // 11+ people
+                            meetingDetails: []
+                        };
                     }
+                    
                     participantData[participantName].meetings += 1;
-                    participantData[participantName].totalDuration += (meeting.endTime ? (meeting.endTime - meeting.startTime) : 0);
+                    participantData[participantName].totalDuration += duration;
+                    
+                    // Categorize by meeting size
+                    if (meetingSize === 2) {
+                        participantData[participantName].oneOnOne.count += 1;
+                        participantData[participantName].oneOnOne.duration += duration;
+                    } else if (meetingSize <= 5) {
+                        participantData[participantName].smallGroup.count += 1;
+                        participantData[participantName].smallGroup.duration += duration;
+                    } else if (meetingSize <= 10) {
+                        participantData[participantName].mediumGroup.count += 1;
+                        participantData[participantName].mediumGroup.duration += duration;
+                    } else {
+                        participantData[participantName].largeGroup.count += 1;
+                        participantData[participantName].largeGroup.duration += duration;
+                    }
+                    
+                    // Store meeting details for drill-down
+                    participantData[participantName].meetingDetails.push({
+                        id: meeting.id,
+                        title: meeting.title || `Meeting ${meeting.id}`,
+                        startTime: meeting.startTime,
+                        endTime: meeting.endTime,
+                        duration: duration,
+                        participantCount: meetingSize,
+                        url: meeting.url
+                    });
                 }
             });
         }
@@ -653,13 +697,30 @@ function renderCollaboratorsChart() {
     // Calculate chart height based on number of collaborators (minimum 350px, max 800px)
     const chartHeight = Math.min(Math.max(350, collaborators.length * 35 + 50), 800);
     
-    const chartData = collaborators.map((collab, index) => ({
-        name: collab[0],
-        meetings: collab[1].meetings,
-        duration: collab[1].totalDuration,
-        durationInHours: collab[1].totalDuration / (1000 * 60 * 60), // Convert to hours for chart display
-        color: baseColors[index % baseColors.length]
-    }));
+    const chartData = collaborators.map((collab, index) => {
+        const data = collab[1];
+        // Calculate collaboration quality score
+        const qualityScore = (
+            data.oneOnOne.duration * 1.0 +
+            data.smallGroup.duration * 0.75 +
+            data.mediumGroup.duration * 0.5 +
+            data.largeGroup.duration * 0.25
+        ) / (1000 * 60 * 60); // Convert to hours
+        
+        return {
+            name: collab[0],
+            meetings: data.meetings,
+            duration: data.totalDuration,
+            durationInHours: data.totalDuration / (1000 * 60 * 60),
+            qualityScore: qualityScore,
+            oneOnOne: data.oneOnOne,
+            smallGroup: data.smallGroup,
+            mediumGroup: data.mediumGroup,
+            largeGroup: data.largeGroup,
+            meetingDetails: data.meetingDetails,
+            color: baseColors[index % baseColors.length]
+        };
+    });
 
     const options = {
         ...getCommonChartOptions(),
@@ -670,12 +731,25 @@ function renderCollaboratorsChart() {
                 y: parseFloat(c.durationInHours.toFixed(2)),
                 fillColor: c.color,
                 meetings: c.meetings,
-                totalDuration: c.duration
+                totalDuration: c.duration,
+                qualityScore: c.qualityScore,
+                oneOnOne: c.oneOnOne,
+                smallGroup: c.smallGroup,
+                mediumGroup: c.mediumGroup,
+                largeGroup: c.largeGroup,
+                meetingDetails: c.meetingDetails
             }))
         }],
         chart: { 
             type: 'bar', 
-            height: chartHeight
+            height: chartHeight,
+            events: {
+                dataPointSelection: function(event, chartContext, config) {
+                    const dataIndex = config.dataPointIndex;
+                    const collaboratorData = chartData[dataIndex];
+                    showCollaboratorDrillDown(collaboratorData);
+                }
+            }
         },
         plotOptions: {
             bar: {
@@ -712,7 +786,7 @@ function renderCollaboratorsChart() {
                 }
             },
             title: {
-                text: 'Time Spent (Hours)',
+                text: 'Time Spent (Hours) - Click bars for details',
                 style: { color: '#9aa0a6' }
             }
         },
@@ -730,12 +804,23 @@ function renderCollaboratorsChart() {
                 const data = chartData[dataPointIndex];
                 const formattedDuration = formatDuration(data.duration);
                 const avgDuration = data.meetings > 0 ? formatDuration(data.duration / data.meetings) : '0m';
+                
                 return `
-                    <div style="padding: 8px 12px; background: #1f1f1f; border: 1px solid #333; border-radius: 4px;">
-                        <div style="color: #e8eaed; font-weight: bold; margin-bottom: 4px;">${data.name}</div>
-                        <div style="color: #b8bcc3; font-size: 12px;">Total time: ${formattedDuration}</div>
-                        <div style="color: #b8bcc3; font-size: 12px;">${data.meetings} meetings</div>
-                        <div style="color: #b8bcc3; font-size: 12px;">Avg per meeting: ${avgDuration}</div>
+                    <div style="padding: 12px; background: #1f1f1f; border: 1px solid #333; border-radius: 6px; min-width: 250px;">
+                        <div style="color: #e8eaed; font-weight: bold; margin-bottom: 8px; font-size: 14px;">${data.name}</div>
+                        <div style="color: #b8bcc3; font-size: 12px; margin-bottom: 2px;">📊 Total time: ${formattedDuration}</div>
+                        <div style="color: #b8bcc3; font-size: 12px; margin-bottom: 2px;">🤝 ${data.meetings} meetings</div>
+                        <div style="color: #b8bcc3; font-size: 12px; margin-bottom: 8px;">⏱️ Avg per meeting: ${avgDuration}</div>
+                        
+                        <div style="border-top: 1px solid #444; padding-top: 8px; margin-top: 8px;">
+                            <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 4px;">Meeting Size Breakdown:</div>
+                            ${data.oneOnOne.count > 0 ? `<div style="color: #4285f4; font-size: 11px;">👥 1-on-1: ${data.oneOnOne.count} meetings (${formatDuration(data.oneOnOne.duration)})</div>` : ''}
+                            ${data.smallGroup.count > 0 ? `<div style="color: #34a853; font-size: 11px;">👤👤👤 Small group: ${data.smallGroup.count} meetings (${formatDuration(data.smallGroup.duration)})</div>` : ''}
+                            ${data.mediumGroup.count > 0 ? `<div style="color: #fbbc04; font-size: 11px;">👥👥 Medium group: ${data.mediumGroup.count} meetings (${formatDuration(data.mediumGroup.duration)})</div>` : ''}
+                            ${data.largeGroup.count > 0 ? `<div style="color: #ea4335; font-size: 11px;">👥👥👥 Large group: ${data.largeGroup.count} meetings (${formatDuration(data.largeGroup.duration)})</div>` : ''}
+                        </div>
+                        
+                        <div style="color: #1a73e8; font-size: 11px; margin-top: 8px; font-style: italic;">💡 Click for detailed breakdown</div>
                     </div>
                 `;
             }
@@ -787,26 +872,52 @@ function renderActivityChart() {
 
 function renderDurationChart() {
     const buckets = {
-        '0-15 min': 0, '15-30 min': 0, '30-60 min': 0,
-        '1-2 hours': 0, '2+ hours': 0
+        '0-15 min': { count: 0, meetings: [] },
+        '15-30 min': { count: 0, meetings: [] },
+        '30-60 min': { count: 0, meetings: [] },
+        '1-2 hours': { count: 0, meetings: [] },
+        '2+ hours': { count: 0, meetings: [] }
     };
+    
     filteredMeetings.forEach(m => {
         const duration = m.endTime ? (m.endTime - m.startTime) / 60000 : 0;
-        if (duration <= 15) buckets['0-15 min']++;
-        else if (duration <= 30) buckets['15-30 min']++;
-        else if (duration <= 60) buckets['30-60 min']++;
-        else if (duration <= 120) buckets['1-2 hours']++;
-        else buckets['2+ hours']++;
+        if (duration <= 15) {
+            buckets['0-15 min'].count++;
+            buckets['0-15 min'].meetings.push(m);
+        } else if (duration <= 30) {
+            buckets['15-30 min'].count++;
+            buckets['15-30 min'].meetings.push(m);
+        } else if (duration <= 60) {
+            buckets['30-60 min'].count++;
+            buckets['30-60 min'].meetings.push(m);
+        } else if (duration <= 120) {
+            buckets['1-2 hours'].count++;
+            buckets['1-2 hours'].meetings.push(m);
+        } else {
+            buckets['2+ hours'].count++;
+            buckets['2+ hours'].meetings.push(m);
+        }
     });
 
     const durationColors = ['#5f7fbf', '#6ba368', '#b8a347', '#c4645a', '#7a7a7a'];
+    const bucketLabels = Object.keys(buckets);
 
     const options = {
         ...getCommonChartOptions(),
-        series: Object.values(buckets),
-        labels: Object.keys(buckets),
+        series: Object.values(buckets).map(b => b.count),
+        labels: bucketLabels,
         colors: durationColors,
-        chart: { type: 'pie', height: 350 },
+        chart: { 
+            type: 'pie', 
+            height: 350,
+            events: {
+                dataPointSelection: function(event, chartContext, config) {
+                    const selectedLabel = bucketLabels[config.dataPointIndex];
+                    const selectedData = buckets[selectedLabel];
+                    showDurationDrillDown(selectedLabel, selectedData.meetings);
+                }
+            }
+        },
         stroke: {
             show: false
         },
@@ -817,7 +928,7 @@ function renderDurationChart() {
             }
         },
         tooltip: { 
-            y: { formatter: (val) => `${val} meetings` },
+            y: { formatter: (val) => `${val} meetings - Click to see details` },
             theme: 'dark'
         },
         dataLabels: {
@@ -1389,6 +1500,37 @@ async function deleteSession(sessionId, meetingId) {
 
 function closeModal() {
     document.getElementById('meeting-modal').style.display = 'none';
+}
+
+// Side overlay functions
+function showSideOverlay(title, content) {
+    const sideOverlay = document.getElementById('side-overlay');
+    const overlayTitle = document.getElementById('side-overlay-title');
+    const overlayContent = document.getElementById('side-overlay-body');
+    
+    if (!overlayTitle || !overlayContent) {
+        console.error('Side overlay elements not found:', {
+            overlayTitle: !!overlayTitle,
+            overlayContent: !!overlayContent
+        });
+        return;
+    }
+    
+    overlayTitle.textContent = title;
+    overlayContent.innerHTML = content;
+    sideOverlay.style.display = 'block';
+    sideOverlay.classList.add('active');
+}
+
+function closeSideOverlay() {
+    const sideOverlay = document.getElementById('side-overlay');
+    sideOverlay.classList.remove('active');
+    // Hide after animation completes
+    setTimeout(() => {
+        if (!sideOverlay.classList.contains('active')) {
+            sideOverlay.style.display = 'none';
+        }
+    }, 300);
 }
 
 function exportData() {
@@ -1972,6 +2114,284 @@ function addEllipsis() {
     ellipsis.className = 'page-ellipsis';
     ellipsis.textContent = '…';
     pageNumbers.appendChild(ellipsis);
+}
+
+// Drill-down functions using side overlay
+function showCollaboratorDrillDown(collaboratorData) {
+    // Calculate additional insights
+    const avgMeetingDuration = collaboratorData.meetings > 0 ? 
+        collaboratorData.duration / collaboratorData.meetings : 0;
+    
+    // Sort meetings by date (newest first)
+    const sortedMeetings = collaboratorData.meetingDetails.sort((a, b) => b.startTime - a.startTime);
+    
+    // Calculate meeting frequency (meetings per week)
+    const dateRange = sortedMeetings.length > 1 ? 
+        (sortedMeetings[0].startTime - sortedMeetings[sortedMeetings.length - 1].startTime) / (1000 * 60 * 60 * 24 * 7) : 0;
+    const meetingsPerWeek = dateRange > 0 ? (collaboratorData.meetings / dateRange).toFixed(1) : '0';
+    
+    const content = `
+        <div style="margin-bottom: 1.5rem;">
+            <h3 style="color: #e8eaed; margin: 0 0 1rem 0; display: flex; align-items: center; gap: 10px;">
+                <span style="background: ${collaboratorData.color}; width: 20px; height: 20px; border-radius: 50%; display: inline-block;"></span>
+                🤝 Collaboration Analysis: ${escapeHtml(collaboratorData.name)}
+            </h3>
+        </div>
+        
+        <!-- Summary Stats -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #4285f4; font-size: 24px; font-weight: bold;">${collaboratorData.meetings}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Total Meetings</div>
+            </div>
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #34a853; font-size: 24px; font-weight: bold;">${formatDuration(collaboratorData.duration)}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Total Time</div>
+            </div>
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #fbbc04; font-size: 24px; font-weight: bold;">${formatDuration(avgMeetingDuration)}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Avg Duration</div>
+            </div>
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #ea4335; font-size: 24px; font-weight: bold;">${meetingsPerWeek}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Meetings/Week</div>
+            </div>
+        </div>
+        
+        <!-- Meeting Size Breakdown -->
+        <div style="background: #2a2a2a; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+            <h4 style="color: #e8eaed; margin: 0 0 1rem 0;">📊 Meeting Size Distribution</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+                ${collaboratorData.oneOnOne.count > 0 ? `
+                <div style="text-align: center; padding: 1rem; background: #1a1a1a; border-radius: 6px; border-left: 4px solid #4285f4;">
+                    <div style="font-size: 18px; font-weight: bold; color: #4285f4;">👥 ${collaboratorData.oneOnOne.count}</div>
+                    <div style="color: #9aa0a6; font-size: 11px; margin: 4px 0;">1-on-1 Meetings</div>
+                    <div style="color: #b8bcc3; font-size: 12px;">${formatDuration(collaboratorData.oneOnOne.duration)}</div>
+                </div>` : ''}
+                ${collaboratorData.smallGroup.count > 0 ? `
+                <div style="text-align: center; padding: 1rem; background: #1a1a1a; border-radius: 6px; border-left: 4px solid #34a853;">
+                    <div style="font-size: 18px; font-weight: bold; color: #34a853;">👤👤👤 ${collaboratorData.smallGroup.count}</div>
+                    <div style="color: #9aa0a6; font-size: 11px; margin: 4px 0;">Small Groups (3-5)</div>
+                    <div style="color: #b8bcc3; font-size: 12px;">${formatDuration(collaboratorData.smallGroup.duration)}</div>
+                </div>` : ''}
+                ${collaboratorData.mediumGroup.count > 0 ? `
+                <div style="text-align: center; padding: 1rem; background: #1a1a1a; border-radius: 6px; border-left: 4px solid #fbbc04;">
+                    <div style="font-size: 18px; font-weight: bold; color: #fbbc04;">👥👥 ${collaboratorData.mediumGroup.count}</div>
+                    <div style="color: #9aa0a6; font-size: 11px; margin: 4px 0;">Medium Groups (6-10)</div>
+                    <div style="color: #b8bcc3; font-size: 12px;">${formatDuration(collaboratorData.mediumGroup.duration)}</div>
+                </div>` : ''}
+                ${collaboratorData.largeGroup.count > 0 ? `
+                <div style="text-align: center; padding: 1rem; background: #1a1a1a; border-radius: 6px; border-left: 4px solid #ea4335;">
+                    <div style="font-size: 18px; font-weight: bold; color: #ea4335;">👥👥👥 ${collaboratorData.largeGroup.count}</div>
+                    <div style="color: #9aa0a6; font-size: 11px; margin: 4px 0;">Large Groups (11+)</div>
+                    <div style="color: #b8bcc3; font-size: 12px;">${formatDuration(collaboratorData.largeGroup.duration)}</div>
+                </div>` : ''}
+            </div>
+            
+            <div style="margin-top: 1rem; padding: 1rem; background: #1a1a1a; border-radius: 6px;">
+                <div style="color: #9aa0a6; font-size: 12px; margin-bottom: 4px;">💡 Collaboration Quality Score</div>
+                <div style="color: #e8eaed; font-size: 16px; font-weight: bold;">${collaboratorData.qualityScore.toFixed(1)} hours</div>
+                <div style="color: #b8bcc3; font-size: 11px;">Weighted by meeting intimacy (1-on-1 = 100%, small = 75%, medium = 50%, large = 25%)</div>
+            </div>
+        </div>
+        
+        <!-- Recent Meetings -->
+        <div style="background: #2a2a2a; padding: 1.5rem; border-radius: 8px;">
+            <h4 style="color: #e8eaed; margin: 0 0 1rem 0;">📅 Recent Meetings (Last 10)</h4>
+            <div style="max-height: 300px; overflow-y: auto;">
+                ${sortedMeetings.slice(0, 10).map(meeting => {
+                    const duration = meeting.endTime ? 
+                        formatDuration(meeting.endTime - meeting.startTime) : 'Ongoing';
+                    const participantIcon = meeting.participantCount === 2 ? '👥' : 
+                        meeting.participantCount <= 5 ? '👤👤👤' : 
+                        meeting.participantCount <= 10 ? '👥👥' : '👥👥👥';
+                    const sizeColor = meeting.participantCount === 2 ? '#4285f4' : 
+                        meeting.participantCount <= 5 ? '#34a853' : 
+                        meeting.participantCount <= 10 ? '#fbbc04' : '#ea4335';
+                    
+                    return `
+                    <div class="meeting-drill-item" data-meeting-id="${meeting.id}" style="
+                        background: #1a1a1a; 
+                        margin: 0.5rem 0; 
+                        padding: 1rem; 
+                        border-radius: 6px; 
+                        border-left: 3px solid ${sizeColor};
+                        cursor: pointer;
+                        transition: background 0.2s ease;
+                    " onmouseover="this.style.background='#333'" onmouseout="this.style.background='#1a1a1a'">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div style="flex: 1;">
+                                <div style="color: #e8eaed; font-weight: bold; font-size: 14px;">${escapeHtml(meeting.title)}</div>
+                                <div style="color: #9aa0a6; font-size: 12px; margin-top: 2px;">${new Date(meeting.startTime).toLocaleDateString()} • ${new Date(meeting.startTime).toLocaleTimeString()}</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="color: ${sizeColor}; font-size: 12px; font-weight: bold;">${participantIcon} ${meeting.participantCount}</div>
+                                <div style="color: #b8bcc3; font-size: 11px;">${duration}</div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+    
+    // Show the content in the side overlay
+    showSideOverlay(`🤝 ${collaboratorData.name}`, content);
+    
+    // Add click event listeners for meeting drill items after the overlay is shown
+    setTimeout(() => {
+        document.querySelectorAll('#side-overlay .meeting-drill-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const meetingId = e.currentTarget.getAttribute('data-meeting-id');
+                closeSideOverlay();
+                showMeetingDetails(meetingId);
+            });
+        });
+    }, 100);
+}
+
+function showDurationDrillDown(durationLabel, meetings) {
+    // Calculate insights for this duration bucket
+    const totalTime = meetings.reduce((sum, m) => sum + (m.endTime ? (m.endTime - m.startTime) : 0), 0);
+    const avgParticipants = meetings.length > 0 ? 
+        meetings.reduce((sum, m) => sum + m.participants.length, 0) / meetings.length : 0;
+    
+    // Group by participant count
+    const participantGroups = {
+        '1-2 people': meetings.filter(m => m.participants.length <= 2),
+        '3-5 people': meetings.filter(m => m.participants.length >= 3 && m.participants.length <= 5),
+        '6-10 people': meetings.filter(m => m.participants.length >= 6 && m.participants.length <= 10),
+        '11+ people': meetings.filter(m => m.participants.length >= 11)
+    };
+    
+    // Sort meetings by date (newest first)
+    const sortedMeetings = meetings.sort((a, b) => b.startTime - a.startTime);
+    
+    // Calculate efficiency insights
+    let efficiencyBreakdown = { A: 0, B: 0, C: 0, D: 0, F: 0 };
+    meetings.forEach(m => {
+        const score = calculateEfficiencyScore(m);
+        if (score !== 'N/A') {
+            const grade = score.split('(')[1]?.split(')')[0];
+            if (grade && efficiencyBreakdown[grade] !== undefined) {
+                efficiencyBreakdown[grade]++;
+            }
+        }
+    });
+    
+    const content = `
+        <div style="margin-bottom: 1.5rem;">
+            <h3 style="color: #e8eaed; margin: 0 0 1rem 0;">⏱️ Duration Analysis: ${durationLabel}</h3>
+        </div>
+        
+        <!-- Summary Stats -->
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 2rem;">
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #4285f4; font-size: 24px; font-weight: bold;">${meetings.length}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Total Meetings</div>
+            </div>
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #34a853; font-size: 24px; font-weight: bold;">${formatDuration(totalTime)}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Total Time</div>
+            </div>
+            <div style="background: #2a2a2a; padding: 1rem; border-radius: 8px; text-align: center;">
+                <div style="color: #fbbc04; font-size: 24px; font-weight: bold;">${avgParticipants.toFixed(1)}</div>
+                <div style="color: #9aa0a6; font-size: 12px;">Avg Participants</div>
+            </div>
+        </div>
+        
+        <!-- Participant Size Breakdown -->
+        <div style="background: #2a2a2a; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+            <h4 style="color: #e8eaed; margin: 0 0 1rem 0;">👥 Participant Size Distribution</h4>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+                ${Object.entries(participantGroups).map(([size, groupMeetings], index) => {
+                    const colors = ['#4285f4', '#34a853', '#fbbc04', '#ea4335'];
+                    const color = colors[index % colors.length];
+                    const percentage = meetings.length > 0 ? ((groupMeetings.length / meetings.length) * 100).toFixed(1) : '0';
+                    
+                    return groupMeetings.length > 0 ? `
+                    <div style="text-align: center; padding: 1rem; background: #1a1a1a; border-radius: 6px; border-left: 4px solid ${color};">
+                        <div style="font-size: 18px; font-weight: bold; color: ${color};">${groupMeetings.length}</div>
+                        <div style="color: #9aa0a6; font-size: 11px; margin: 4px 0;">${size}</div>
+                        <div style="color: #b8bcc3; font-size: 12px;">${percentage}%</div>
+                    </div>` : '';
+                }).join('')}
+            </div>
+        </div>
+        
+        <!-- Efficiency Breakdown -->
+        <div style="background: #2a2a2a; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+            <h4 style="color: #e8eaed; margin: 0 0 1rem 0;">🎯 Efficiency Grade Distribution</h4>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                ${Object.entries(efficiencyBreakdown).map(([grade, count]) => {
+                    const gradeColors = { A: '#34a853', B: '#4285f4', C: '#fbbc04', D: '#ff9800', F: '#ea4335' };
+                    const color = gradeColors[grade];
+                    const percentage = meetings.length > 0 ? ((count / meetings.length) * 100).toFixed(1) : '0';
+                    
+                    return count > 0 ? `
+                    <div style="text-align: center; padding: 0.75rem; background: #1a1a1a; border-radius: 6px; border: 2px solid ${color}; min-width: 60px;">
+                        <div style="font-size: 18px; font-weight: bold; color: ${color};">${grade}</div>
+                        <div style="color: #e8eaed; font-size: 14px; margin: 2px 0;">${count}</div>
+                        <div style="color: #9aa0a6; font-size: 10px;">${percentage}%</div>
+                    </div>` : '';
+                }).join('')}
+            </div>
+        </div>
+        
+        <!-- Recent Meetings -->
+        <div style="background: #2a2a2a; padding: 1.5rem; border-radius: 8px;">
+            <h4 style="color: #e8eaed; margin: 0 0 1rem 0;">📅 Meetings in this Duration Range (Last 15)</h4>
+            <div style="max-height: 350px; overflow-y: auto;">
+                ${sortedMeetings.slice(0, 15).map(meeting => {
+                    const duration = meeting.endTime ? 
+                        formatDuration(meeting.endTime - meeting.startTime) : 'Ongoing';
+                    const efficiency = calculateEfficiencyScore(meeting);
+                    const efficiencyGrade = efficiency !== 'N/A' ? efficiency.split('(')[1]?.split(')')[0] : 'N/A';
+                    const gradeColors = { A: '#34a853', B: '#4285f4', C: '#fbbc04', D: '#ff9800', F: '#ea4335' };
+                    const gradeColor = gradeColors[efficiencyGrade] || '#9aa0a6';
+                    
+                    return `
+                    <div class="meeting-drill-item" data-meeting-id="${meeting.id}" style="
+                        background: #1a1a1a; 
+                        margin: 0.5rem 0; 
+                        padding: 1rem; 
+                        border-radius: 6px; 
+                        border-left: 3px solid ${gradeColor};
+                        cursor: pointer;
+                        transition: background 0.2s ease;
+                    " onmouseover="this.style.background='#333'" onmouseout="this.style.background='#1a1a1a'">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div style="flex: 1;">
+                                <div style="color: #e8eaed; font-weight: bold; font-size: 14px;">${escapeHtml(meeting.title || `Meeting ${meeting.id}`)}</div>
+                                <div style="color: #9aa0a6; font-size: 12px; margin-top: 2px;">${new Date(meeting.startTime).toLocaleDateString()} • ${new Date(meeting.startTime).toLocaleTimeString()}</div>
+                                <div style="color: #b8bcc3; font-size: 11px; margin-top: 4px;">👥 ${meeting.participants.length} participants</div>
+                            </div>
+                            <div style="text-align: right;">
+                                <div style="color: #e8eaed; font-size: 12px; font-weight: bold;">${duration}</div>
+                                <div style="color: ${gradeColor}; font-size: 11px; font-weight: bold; margin-top: 2px;">Grade: ${efficiencyGrade}</div>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+    `;
+    
+    // Show the content in the side overlay
+    showSideOverlay(`⏱️ ${durationLabel}`, content);
+    
+    // Add click event listeners for meeting drill items after the overlay is shown
+    setTimeout(() => {
+        document.querySelectorAll('#side-overlay .meeting-drill-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const meetingId = e.currentTarget.getAttribute('data-meeting-id');
+                closeSideOverlay();
+                showMeetingDetails(meetingId);
+            });
+        });
+    }, 100);
 }
 
 function generateMockData() {
