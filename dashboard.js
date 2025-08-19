@@ -198,6 +198,7 @@ function initializeFilters() {
     }, 100); // Small delay to ensure everything is loaded
     
     populateParticipantFilter();
+    initializeHourlyStartTime();
 }
 
 function setupFallbackDateInputs() {
@@ -222,6 +223,31 @@ function setupFallbackDateInputs() {
             }
         });
     }
+}
+
+function initializeHourlyStartTime() {
+    const startTimeSelect = document.getElementById('hourly-start-time');
+    if (!startTimeSelect) {
+        console.warn('Hourly start time select element not found');
+        return;
+    }
+    
+    // Get saved preference from localStorage, default to 0 (12:00 AM)
+    const savedStartTime = localStorage.getItem('meetTracker_hourlyStartTime');
+    const defaultStartTime = savedStartTime ? parseInt(savedStartTime) : 0;
+    
+    // Set the dropdown to the saved/default value
+    startTimeSelect.value = defaultStartTime.toString();
+    
+    console.log(`Initialized hourly start time to: ${defaultStartTime}:00 (${formatHour(defaultStartTime)})`);
+}
+
+// Helper function to format hour for display
+function formatHour(hour) {
+    if (hour === 0) return '12:00 AM';
+    if (hour === 12) return '12:00 PM';
+    if (hour < 12) return `${hour}:00 AM`;
+    return `${hour - 12}:00 PM`;
 }
 
 function populateParticipantFilter() {
@@ -269,6 +295,13 @@ function setupEventListeners() {
     document.getElementById('export-data').addEventListener('click', exportData);
     document.getElementById('clear-data').addEventListener('click', clearAllData);
     document.getElementById('cleanup-zombie-btn').addEventListener('click', cleanupZombieMeetings);
+    
+    // Hourly start time dropdown event listener
+    document.getElementById('hourly-start-time').addEventListener('change', (e) => {
+        const startHour = parseInt(e.target.value);
+        localStorage.setItem('meetTracker_hourlyStartTime', startHour.toString());
+        renderHourlyDistributionChart(); // Re-render the chart with new start time
+    });
     
     // Manual cleanup button handlers
     document.getElementById('cleanup-30-days').addEventListener('click', () => manualCleanup(30));
@@ -1032,9 +1065,23 @@ function renderHourlyDistributionChart() {
     
     // Convert minutes to hours for display
     const hourlyDataInHours = hourlyData.map(minutes => parseFloat((minutes / 60).toFixed(2)));
+    
+    // Get user's preferred start time (default to 0 = midnight)
+    const savedStartTime = localStorage.getItem('meetTracker_hourlyStartTime');
+    const startHour = savedStartTime ? parseInt(savedStartTime) : 0;
+    
+    // Reorder data and labels to start from user's preferred hour
+    const reorderedData = [];
+    const reorderedLabels = [];
+    
+    for (let i = 0; i < 24; i++) {
+        const actualHour = (startHour + i) % 24;
+        reorderedData.push(hourlyDataInHours[actualHour]);
+        reorderedLabels.push(formatHour(actualHour));
+    }
 
     // Convert to 12-hour format with AM/PM
-    const formatHour = (hour) => {
+    const formatHourLocal = (hour) => {
         if (hour === 0) return '12 AM';
         if (hour === 12) return '12 PM';
         if (hour < 12) return `${hour} AM`;
@@ -1043,12 +1090,12 @@ function renderHourlyDistributionChart() {
 
     const options = {
         ...getCommonChartOptions(),
-        series: [{ name: 'Meeting Time', data: hourlyDataInHours, color: '#34a853' }],
+        series: [{ name: 'Meeting Time', data: reorderedData, color: '#34a853' }],
         chart: { type: 'area', height: 350 },
         xaxis: {
-            categories: Array.from({ length: 24 }, (_, i) => formatHour(i)),
+            categories: reorderedLabels,
             title: { 
-                text: 'Hour of the Day',
+                text: `Hour of the Day (Starting at ${formatHourLocal(startHour)})`,
                 style: { color: '#9aa0a6', fontSize: '14px' }
             },
             labels: {

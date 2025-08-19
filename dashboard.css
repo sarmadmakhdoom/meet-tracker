@@ -147,6 +147,24 @@ body {
     box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
 }
 
+.hourly-start-dropdown {
+    background: #2d2d2d;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    color: #e8eaed;
+    font-size: 0.85rem;
+    min-width: 160px;
+    outline: none;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.hourly-start-dropdown:focus {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
 .filters-row .btn-primary,
 .filters-row .btn-secondary {
     padding: 0.5rem 1rem;
