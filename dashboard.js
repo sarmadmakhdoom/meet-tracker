@@ -2198,7 +2198,7 @@ function showCollaboratorDrillDown(collaboratorData) {
         <!-- Recent Meetings -->
         <div style="background: #2a2a2a; padding: 1.5rem; border-radius: 8px;">
             <h4 style="color: #e8eaed; margin: 0 0 1rem 0;">📅 Recent Meetings (Last 10)</h4>
-            <div style="max-height: 300px; overflow-y: auto;">
+            <div>
                 ${sortedMeetings.slice(0, 10).map(meeting => {
                     const duration = meeting.endTime ? 
                         formatDuration(meeting.endTime - meeting.startTime) : 'Ongoing';
