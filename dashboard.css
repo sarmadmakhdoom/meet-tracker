@@ -855,6 +855,36 @@ button {
     align-items: center;
 }
 
+/* Cleanup button group */
+.cleanup-group {
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
+    padding: 0.25rem;
+    background: rgba(52, 168, 83, 0.1);
+    border-radius: 10px;
+    border: 1px solid rgba(52, 168, 83, 0.3);
+}
+
+.cleanup-btn {
+    width: auto !important;
+    padding: 0 0.5rem !important;
+    font-size: 11px !important;
+    font-weight: 500;
+    background: rgba(52, 168, 83, 0.1) !important;
+    border-color: rgba(52, 168, 83, 0.4) !important;
+    color: #34a853 !important;
+    transition: all 0.2s ease;
+}
+
+.cleanup-btn:hover {
+    background: rgba(52, 168, 83, 0.2) !important;
+    border-color: #34a853 !important;
+    color: #ffffff !important;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(52, 168, 83, 0.3);
+}
+
 .btn-compact {
     width: 32px;
     height: 32px;

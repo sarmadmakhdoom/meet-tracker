@@ -223,7 +223,11 @@
                 <p>Google Meet Tracker Extension &copy; 2025</p>
                 <div class="footer-actions">
                     <button id="show-storage-stats" class="btn btn-compact" title="Storage Statistics">📊</button>
-                    <button id="cleanup-data" class="btn btn-compact" title="Cleanup Old Data (Disabled)">🧹</button>
+                    <div class="cleanup-group">
+                        <button id="cleanup-30-days" class="btn btn-compact cleanup-btn" title="Clean meetings older than 30 days">🧹 30d</button>
+                        <button id="cleanup-90-days" class="btn btn-compact cleanup-btn" title="Clean meetings older than 90 days">🧹 90d</button>
+                        <button id="cleanup-1-year" class="btn btn-compact cleanup-btn" title="Clean meetings older than 1 year">🧹 1y</button>
+                    </div>
                     <button id="export-enhanced-data" class="btn btn-compact" title="Enhanced Export">📦</button>
                     <button id="cleanup-zombie-btn" class="btn btn-compact btn-warning-compact" title="End Zombie Meetings">🔧</button>
                     <button id="clear-data" class="btn btn-compact btn-danger-compact" title="Clear All Data">🗑️</button>

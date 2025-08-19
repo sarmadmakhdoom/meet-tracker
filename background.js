@@ -212,6 +212,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse(deleteSessionResult);
                     break;
                     
+                case 'manualCleanup':
+                    const cleanupResult = await manualCleanupOldMeetings(request.days);
+                    sendResponse(cleanupResult);
+                    break;
+                    
                 default:
                     console.warn(`⚠️ Unknown message type: ${messageType}`);
                     sendResponse({ error: `Unknown message type: ${messageType}` });
@@ -1459,7 +1464,7 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     }
 });
 
-// Cleanup old meetings (keep last 30 days)
+// Cleanup old meetings (keep last 30 days) - LEGACY FUNCTION, NOT USED
 async function cleanupOldMeetings() {
     const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
     const meetings = await getMeetings();
@@ -1470,6 +1475,81 @@ async function cleanupOldMeetings() {
     if (recentMeetings.length !== meetings.length) {
         await saveMeetings(recentMeetings);
         console.log(`🧹 Cleaned up ${meetings.length - recentMeetings.length} old meetings`);
+    }
+}
+
+// Manual cleanup function for specific time periods
+async function manualCleanupOldMeetings(days) {
+    console.log(`🧹 Manual cleanup: Deleting meetings older than ${days} days...`);
+    
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, cannot clean up');
+            return { success: false, message: 'Storage not available' };
+        }
+        
+        const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
+        console.log(`🔍 Cutoff time: ${new Date(cutoffTime).toISOString()}`);
+        
+        // Get all meetings and sessions
+        const allMeetings = await storage.getMeetings();
+        const allSessions = await storage.getAllSessions();
+        
+        console.log(`📊 Found ${allMeetings.length} meetings and ${allSessions.length} sessions`);
+        
+        // Filter old data
+        const oldMeetings = allMeetings.filter(meeting => meeting.startTime < cutoffTime);
+        const oldSessions = allSessions.filter(session => session.startTime < cutoffTime);
+        
+        console.log(`🗑️ Found ${oldMeetings.length} old meetings and ${oldSessions.length} old sessions to delete`);
+        
+        if (oldMeetings.length === 0 && oldSessions.length === 0) {
+            return {
+                success: true,
+                message: `No meetings older than ${days} days found`,
+                deletedCount: 0
+            };
+        }
+        
+        // Delete old meetings
+        for (const meeting of oldMeetings) {
+            try {
+                await storage.deleteMeeting(meeting.id);
+                console.log(`✅ Deleted old meeting: ${meeting.id}`);
+            } catch (error) {
+                console.error(`❌ Error deleting meeting ${meeting.id}:`, error.message);
+            }
+        }
+        
+        // Delete old sessions
+        for (const session of oldSessions) {
+            try {
+                await storage.deleteSession(session.sessionId);
+                console.log(`✅ Deleted old session: ${session.sessionId}`);
+            } catch (error) {
+                console.error(`❌ Error deleting session ${session.sessionId}:`, error.message);
+            }
+        }
+        
+        const totalDeleted = oldMeetings.length + oldSessions.length;
+        
+        console.log(`🧹 Manual cleanup complete: Deleted ${totalDeleted} items (${oldMeetings.length} meetings + ${oldSessions.length} sessions)`);
+        
+        return {
+            success: true,
+            message: `Successfully deleted ${totalDeleted} items older than ${days} days`,
+            deletedCount: totalDeleted,
+            deletedMeetings: oldMeetings.length,
+            deletedSessions: oldSessions.length
+        };
+        
+    } catch (error) {
+        console.error('❌ Error during manual cleanup:', error);
+        return { 
+            success: false, 
+            message: `Cleanup failed: ${error.message}` 
+        };
     }
 }
 
@@ -1601,23 +1681,26 @@ async function endZombieMeeting(reason) {
 // User has manual controls in the popup to end zombie meetings when needed
 // Keeping only legitimate meeting end detection (tab close, navigation, UI detection)
 
-// Periodically cleanup old meetings (simple setTimeout approach)
-setInterval(async () => {
-    try {
-        const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
-        const meetings = await getMeetings();
-        const recentMeetings = meetings.filter(meeting => 
-            meeting.startTime > thirtyDaysAgo
-        );
-        
-        if (recentMeetings.length !== meetings.length) {
-            await saveMeetings(recentMeetings);
-            console.log(`🧹 Cleaned up ${meetings.length - recentMeetings.length} old meetings`);
-        }
-    } catch (error) {
-        console.error('Error during cleanup:', error);
-    }
-}, 24 * 60 * 60 * 1000); // Run every 24 hours
+// AUTOMATIC CLEANUP DISABLED - Manual cleanup available via dashboard
+// Previously: Periodically cleanup old meetings (simple setTimeout approach)
+// setInterval(async () => {
+//     try {
+//         const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+//         const meetings = await getMeetings();
+//         const recentMeetings = meetings.filter(meeting => 
+//             meeting.startTime > thirtyDaysAgo
+//         );
+//         
+//         if (recentMeetings.length !== meetings.length) {
+//             await saveMeetings(recentMeetings);
+//             console.log(`🧹 Cleaned up ${meetings.length - recentMeetings.length} old meetings`);
+//         }
+//     } catch (error) {
+//         console.error('Error during cleanup:', error);
+//     }
+// }, 24 * 60 * 60 * 1000); // Run every 24 hours
+
+console.log('🔧 Automatic cleanup DISABLED - use manual cleanup buttons in dashboard');
 
 // Add debugging functions to global scope for manual inspection
 self.debugMeetingTracker = {

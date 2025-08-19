@@ -270,6 +270,11 @@ function setupEventListeners() {
     document.getElementById('clear-data').addEventListener('click', clearAllData);
     document.getElementById('cleanup-zombie-btn').addEventListener('click', cleanupZombieMeetings);
     
+    // Manual cleanup button handlers
+    document.getElementById('cleanup-30-days').addEventListener('click', () => manualCleanup(30));
+    document.getElementById('cleanup-90-days').addEventListener('click', () => manualCleanup(90));
+    document.getElementById('cleanup-1-year').addEventListener('click', () => manualCleanup(365));
+    
     document.getElementById('modal-close').addEventListener('click', closeModal);
     document.getElementById('meeting-modal').addEventListener('click', (e) => {
         if (e.target.id === 'meeting-modal') closeModal();
@@ -1644,6 +1649,76 @@ async function exportEnhancedData() {
     }
 }
 
+// Manual cleanup function for different time periods
+async function manualCleanup(days) {
+    const timeLabels = {
+        30: '30 days',
+        90: '90 days', 
+        365: '1 year'
+    };
+    
+    const timeLabel = timeLabels[days] || `${days} days`;
+    
+    const confirmed = confirm(
+        `🧹 Manual Cleanup (${timeLabel})\n\n` +
+        `This will permanently delete all meetings older than ${timeLabel}.\n\n` +
+        `This action cannot be undone.\n\n` +
+        `Continue with cleanup?`
+    );
+    
+    if (!confirmed) return;
+    
+    const button = document.getElementById(`cleanup-${days === 365 ? '1-year' : days + '-days'}`);
+    const originalText = button?.textContent;
+    
+    try {
+        // Show loading state
+        if (button) {
+            button.textContent = '🔄';
+            button.disabled = true;
+        }
+        
+        const response = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ 
+                type: 'manualCleanup',
+                days: days
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (response && response.success) {
+            const message = `✅ Cleanup Complete!\n\n` +
+                `• ${response.deletedCount || 0} meetings deleted\n` +
+                `• Meetings older than ${timeLabel} have been removed\n\n` +
+                `Storage has been optimized.`;
+            alert(message);
+            
+            // Refresh the dashboard data
+            await loadMeetings();
+            applyFilters();
+        } else {
+            alert(response?.message || `❌ Cleanup failed. Please try again.`);
+        }
+        
+    } catch (error) {
+        console.error('Error during manual cleanup:', error);
+        alert(`❌ Error during cleanup: ${error.message}`);
+    } finally {
+        // Reset button after 2 seconds
+        setTimeout(() => {
+            if (button) {
+                button.textContent = originalText;
+                button.disabled = false;
+            }
+        }, 2000);
+    }
+}
+
 // Force end zombie meetings (similar to popup)
 async function cleanupZombieMeetings() {
     const cleanupBtn = document.getElementById('cleanup-zombie-btn');
@@ -1712,11 +1787,15 @@ async function deleteMeetingEntry(meetingId) {
     const meetingDate = new Date(meeting.startTime).toLocaleString();
     
     // Confirm deletion
+    const sessionCount = meeting.sessionCount || 1;
     const confirmed = confirm(
-        `🗑️ Delete Meeting?\n\n` +
+        `🗑️ Delete Entire Meeting?\n\n` +
         `Title: ${meetingTitle}\n` +
         `Date: ${meetingDate}\n` +
+        `Sessions: ${sessionCount}\n` +
         `Participants: ${meeting.participants.length}\n\n` +
+        `⚠️ WARNING: This will delete ALL ${sessionCount} session(s) for this meeting.\n` +
+        `To delete individual sessions, use the "Details" button instead.\n\n` +
         `This action cannot be undone. Continue?`
     );
     
