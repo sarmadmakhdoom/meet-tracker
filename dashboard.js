@@ -1,6 +1,6 @@
 // Dashboard JavaScript for Google Meet Tracker - Dark Mode Analytics
 
-let allMeetings = [];
+let allMeetings = []; // Now contains aggregated meetings (combined sessions)
 let filteredMeetings = [];
 let charts = {};
 const a_hours_work_day = 8;
@@ -28,7 +28,7 @@ function startPeriodicRefresh() {
         clearInterval(refreshTimer);
     }
     
-    // Check if we have active sessions
+    // Check if we have active sessions (aggregated meetings can have active sessions)
     const hasActiveSessions = allMeetings.some(m => m.isActive === true);
     
     if (hasActiveSessions) {
@@ -75,7 +75,7 @@ async function loadMeetings() {
             
             // Use async/await with Promise wrapper for proper error handling
             const response = await new Promise((resolve, reject) => {
-                chrome.runtime.sendMessage({ action: 'getMeetings' }, (response) => {
+                chrome.runtime.sendMessage({ action: 'getMeetingsAggregated' }, (response) => {
                     if (chrome.runtime.lastError) {
                         reject(new Error(chrome.runtime.lastError.message));
                     } else {
@@ -85,36 +85,42 @@ async function loadMeetings() {
             });
             
             console.log('📥 Dashboard: Received response:', response);
+            console.log('📥 Dashboard: Response type:', typeof response, 'isArray:', Array.isArray(response));
             
             // Check if response is valid
-            if (!response || (response.error && response.error.includes('Storage not initialized'))) {
-                console.warn('⚠️ Storage not initialized, using mock data');
-                allMeetings = generateMockData();
-                filteredMeetings = [...allMeetings];
+            if (!response) {
+                console.warn('⚠️ No response received, using empty array');
+                allMeetings = [];
+                filteredMeetings = [];
+            } else if (response.error && response.error.includes('Storage not initialized')) {
+                console.warn('⚠️ Storage not initialized, using empty array');
+                allMeetings = [];
+                filteredMeetings = [];
             } else if (response.error) {
                 console.error('❌ Storage error:', response.error);
-                console.warn('⚠️ Falling back to mock data due to storage error');
-                allMeetings = generateMockData();
-                filteredMeetings = [...allMeetings];
+                console.warn('⚠️ Using empty array due to storage error');
+                allMeetings = [];
+                filteredMeetings = [];
             } else if (!Array.isArray(response)) {
-                console.warn('⚠️ Invalid response from storage, using empty array:', response);
+                console.warn('⚠️ Invalid response from storage, expected array but got:', typeof response, response);
                 allMeetings = [];
                 filteredMeetings = [];
             } else {
                 allMeetings = response;
                 filteredMeetings = [...allMeetings];
-                console.log(`✅ Successfully loaded ${allMeetings.length} meetings from storage.`);
+                console.log(`✅ Successfully loaded ${allMeetings.length} aggregated meetings from storage.`);
             }
             
         } catch (error) {
             const errorMsg = error.message || JSON.stringify(error);
             console.error('❌ Dashboard: Error loading meetings:', errorMsg);
-            console.warn('⚠️ Falling back to mock data due to communication error');
+            console.error('❌ Dashboard: Error stack:', error.stack);
+            console.warn('⚠️ Using empty array due to communication error');
             
-            // Use mock data as fallback
-            allMeetings = generateMockData();
-            filteredMeetings = [...allMeetings];
-            console.log(`📝 Loaded ${allMeetings.length} mock meetings due to error.`);
+            // Use empty array instead of mock data to see real problems
+            allMeetings = [];
+            filteredMeetings = [];
+            console.log('📝 Loaded 0 meetings due to error.');
         }
     } else {
         console.warn('⚠️ Chrome extension APIs not available. Using mock data for development.');
@@ -987,7 +993,7 @@ function updateParticipantsSummary() {
     container.innerHTML = sorted.map(([name, count]) => `
         <div class="participant-item">
             <span class="participant-name">${escapeHtml(name)}</span>
-            <span class="participant-count">${count} sessions</span>
+            <span class="participant-count">${count} meetings</span>
         </div>
     `).join('');
 }
@@ -1037,8 +1043,8 @@ function updateMeetingsTable() {
     const paginationContainer = document.getElementById('pagination-container');
     
     if (filteredMeetings.length === 0) {
-        tbody.innerHTML = '<tr class="loading-row"><td colspan="6">No sessions found</td></tr>';
-        countEl.textContent = '0 sessions';
+        tbody.innerHTML = '<tr class="loading-row"><td colspan="6">No meetings found</td></tr>';
+        countEl.textContent = '0 meetings';
         paginationContainer.style.display = 'none';
         return;
     }
@@ -1051,15 +1057,15 @@ function updateMeetingsTable() {
         currentPage = 1;
     }
     
-    // Count active vs completed sessions
-    const activeSessions = filteredMeetings.filter(m => m.isActive === true).length;
-    const completedSessions = filteredMeetings.length - activeSessions;
+    // Count active vs completed meetings
+    const activeMeetings = filteredMeetings.filter(m => m.isActive === true).length;
+    const completedMeetings = filteredMeetings.length - activeMeetings;
     
-    countEl.textContent = `${filteredMeetings.length} sessions (${activeSessions} active, ${completedSessions} completed)`;
+    countEl.textContent = `${filteredMeetings.length} meetings (${activeMeetings} active, ${completedMeetings} completed)`;
     
-    // Get sorted meetings for current page - active sessions first
+    // Get sorted meetings for current page - active meetings first
     const sorted = [...filteredMeetings].sort((a, b) => {
-        // Active sessions first
+        // Active meetings first
         if (a.isActive !== b.isActive) {
             return b.isActive - a.isActive;
         }
@@ -1077,20 +1083,23 @@ function updateMeetingsTable() {
         let statusIndicator = '';
         
         if (m.isActive) {
-            // Active session - show current duration
-            duration = formatDuration(m.duration) + ' (ongoing)';
-            statusIndicator = '<span class="status-active" title="Session in progress">🔴 LIVE</span> ';
+            // Active meeting - show current duration
+            if (m.duration > 0) {
+                // Use accumulated duration from completed sessions + current session time
+                const currentSessionTime = Date.now() - m.startTime;
+                duration = formatDuration(m.duration + currentSessionTime) + ' (ongoing)';
+            } else {
+                // Fallback: calculate from start time
+                duration = formatDuration(Date.now() - m.startTime) + ' (ongoing)';
+            }
+            statusIndicator = '<span class="status-active" title="Meeting in progress">🔴 LIVE</span> ';
         } else if (m.endTime) {
-            duration = formatDuration(m.endTime - m.startTime);
-            statusIndicator = '<span class="status-completed" title="Session completed">✅</span> ';
-        } else if (m.currentDuration) {
-            // Use currentDuration from minute logs
-            duration = formatDuration(m.currentDuration) + ' (ongoing)';
-            statusIndicator = '<span class="status-active" title="Session in progress">🔴 LIVE</span> ';
+            duration = formatDuration(m.duration || (m.endTime - m.startTime));
+            statusIndicator = '<span class="status-completed" title="Meeting completed">✅</span> ';
         } else {
             // Fallback: calculate from start time
             duration = formatDuration(Date.now() - m.startTime) + ' (ongoing)';
-            statusIndicator = '<span class="status-active" title="Session in progress">🔴 LIVE</span> ';
+            statusIndicator = '<span class="status-active" title="Meeting in progress">🔴 LIVE</span> ';
         }
         
         const efficiency = calculateEfficiencyScore(m);
@@ -1115,10 +1124,14 @@ function updateMeetingsTable() {
         const title = m.title || `Meeting ${m.meetingId || m.id}`;
         const shortTitle = title.length > 30 ? title.substring(0, 27) + '...' : title;
         
+        // Add session count for aggregated meetings
+        const sessionInfo = m.sessionCount > 1 ? ` (${m.sessionCount} sessions)` : '';
+        const displayTitle = shortTitle + sessionInfo;
+        
         return `
             <tr class="${m.isActive ? 'active-session' : 'completed-session'}">
                 <td>${statusIndicator}${new Date(m.startTime).toLocaleString()}</td>
-                <td class="meeting-title" title="${escapeHtml(title)}">${escapeHtml(shortTitle)}</td>
+                <td class="meeting-title" title="${escapeHtml(title + sessionInfo)}">${escapeHtml(displayTitle)}</td>
                 <td>${duration}</td>
                 <td class="meeting-participants" title="${escapeHtml(participantNames.join(', '))}">${escapeHtml(participants)}</td>
                 <td>${efficiency}</td>
@@ -1192,8 +1205,49 @@ function showMeetingDetails(meetingId) {
     }
 
     const modalBody = document.getElementById('modal-body');
-    const duration = meeting.endTime ? formatDuration(meeting.endTime - meeting.startTime) : 'Ongoing';
+    const duration = meeting.endTime ? formatDuration(meeting.duration || (meeting.endTime - meeting.startTime)) : 'Ongoing';
     const efficiency = calculateEfficiencyScore(meeting);
+    
+    // Check if this is an aggregated meeting with sessions
+    const isAggregated = meeting.sessions && meeting.sessions.length > 0;
+    
+    let sessionsHtml = '';
+    if (isAggregated) {
+        sessionsHtml = `
+        <div style="margin: 1.5rem 0; padding: 1rem; background: #2a2a2a; border-radius: 8px;">
+            <h4 style="margin: 0 0 1rem 0; color: #e8eaed;">📋 Individual Sessions (${meeting.sessions.length})</h4>
+            <div class="sessions-list">
+                ${meeting.sessions.map((session, index) => {
+                    const sessionDuration = session.endTime ? 
+                        formatDuration(session.endTime - session.startTime) : 
+                        'Ongoing';
+                    const sessionParticipants = session.participants || [];
+                    const participantNames = sessionParticipants.map(p => {
+                        if (typeof p === 'string') return p;
+                        return p?.name || p?.displayName || p?.id || 'Unknown';
+                    }).filter(name => name !== 'Unknown');
+                    
+                    return `
+                    <div class="session-item" style="background: #1a1a1a; margin: 0.5rem 0; padding: 1rem; border-radius: 6px; border-left: 3px solid #4285f4;">
+                        <div style="display: flex; justify-content: between; align-items: flex-start; margin-bottom: 0.5rem;">
+                            <div style="flex: 1;">
+                                <strong>Session ${index + 1}</strong>
+                                <span style="color: #9aa0a6; margin-left: 0.5rem;">${session.endTime ? '✅ Completed' : '🔴 Active'}</span>
+                            </div>
+                            <button class="delete-session-btn" data-session-id="${session.sessionId}" style="background: #ea4335; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;">Delete</button>
+                        </div>
+                        <div style="font-size: 0.9em; color: #b8bcc3;">
+                            <div><strong>Time:</strong> ${new Date(session.startTime).toLocaleString()} - ${session.endTime ? new Date(session.endTime).toLocaleString() : 'Now'}</div>
+                            <div><strong>Duration:</strong> ${sessionDuration}</div>
+                            <div><strong>Participants:</strong> ${participantNames.length > 0 ? participantNames.join(', ') : 'None recorded'}</div>
+                        </div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
+        </div>
+        `;
+    }
     
     modalBody.innerHTML = `
         ${meeting.title ? `<div style="margin-bottom: 1rem;"><strong>Title:</strong> ${escapeHtml(meeting.title)}</div>` : ''}
@@ -1201,8 +1255,9 @@ function showMeetingDetails(meetingId) {
             <strong>URL:</strong> <a href="${meeting.url}" target="_blank" style="color: #1a73e8;">${meeting.url}</a>
         </div>
         <div style="margin-bottom: 1rem;">
-            <strong>Time:</strong> ${new Date(meeting.startTime).toLocaleString()} - ${meeting.endTime ? new Date(meeting.endTime).toLocaleString() : 'Now'}<br>
-            <strong>Duration:</strong> ${duration}<br>
+            <strong>Overall Time:</strong> ${new Date(meeting.startTime).toLocaleString()} - ${meeting.endTime ? new Date(meeting.endTime).toLocaleString() : 'Now'}<br>
+            <strong>Total Duration:</strong> ${duration}<br>
+            ${isAggregated ? `<strong>Sessions:</strong> ${meeting.sessionCount} join/leave cycles<br>` : ''}
             <strong>Efficiency Score:</strong> ${efficiency} 
             <span class="efficiency-help">?
                 <div class="tooltip">
@@ -1220,7 +1275,7 @@ function showMeetingDetails(meetingId) {
             </span>
         </div>
         <div>
-            <strong>Participants (${meeting.participants.length}):</strong><br>
+            <strong>All Participants (${meeting.participants.length}):</strong><br>
             <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px;">
                 ${meeting.participants.map(p => {
                     let participantName = '';
@@ -1233,9 +1288,98 @@ function showMeetingDetails(meetingId) {
                 }).join('')}
             </div>
         </div>
+        ${sessionsHtml}
     `;
     
+    // Add event listeners for delete session buttons
+    modalBody.querySelectorAll('.delete-session-btn').forEach(button => {
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const sessionId = e.target.getAttribute('data-session-id');
+            deleteSession(sessionId, meetingId);
+        });
+    });
+    
     document.getElementById('meeting-modal').style.display = 'flex';
+}
+
+// Delete individual session function
+async function deleteSession(sessionId, meetingId) {
+    try {
+        // Confirm deletion
+        const confirmed = confirm(
+            `🗑️ Delete Session?\n\n` +
+            `Session ID: ${sessionId}\n\n` +
+            `This will permanently delete this individual session.\n` +
+            `The aggregated meeting will be updated to reflect the remaining sessions.\n\n` +
+            `This action cannot be undone. Continue?`
+        );
+        
+        if (!confirmed) {
+            return;
+        }
+        
+        // Send delete request to background script
+        const response = await new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage({ 
+                action: 'deleteSession', 
+                sessionId: sessionId 
+            }, (response) => {
+                if (chrome.runtime.lastError) {
+                    reject(new Error(chrome.runtime.lastError.message));
+                } else {
+                    resolve(response);
+                }
+            });
+        });
+        
+        if (response.success) {
+            // Refresh the meetings data to get updated aggregated meetings
+            await loadMeetings();
+            applyFilters();
+            
+            // Close and reopen the modal with updated data
+            closeModal();
+            
+            // Show success notification
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #34a853;
+                color: white;
+                padding: 12px 20px;
+                border-radius: 8px;
+                z-index: 10000;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                font-size: 14px;
+                font-weight: 500;
+            `;
+            notification.textContent = `✅ Session deleted successfully`;
+            document.body.appendChild(notification);
+            
+            // Remove notification after 3 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+            
+            // Reopen the modal if the meeting still exists (has remaining sessions)
+            const updatedMeeting = allMeetings.find(m => m.id === meetingId);
+            if (updatedMeeting) {
+                setTimeout(() => showMeetingDetails(meetingId), 500);
+            }
+            
+        } else {
+            alert(`Failed to delete session: ${response.message || 'Unknown error'}`);
+        }
+        
+    } catch (error) {
+        console.error('Error deleting session:', error);
+        alert(`❌ Error deleting session: ${error.message}`);
+    }
 }
 
 function closeModal() {
@@ -1684,7 +1828,7 @@ function updatePaginationControls() {
     // Update info text
     const startIndex = (currentPage - 1) * pageSize + 1;
     const endIndex = Math.min(currentPage * pageSize, filteredMeetings.length);
-    paginationInfo.textContent = `Showing ${startIndex}-${endIndex} of ${filteredMeetings.length} sessions`;
+    paginationInfo.textContent = `Showing ${startIndex}-${endIndex} of ${filteredMeetings.length} meetings`;
     
     // Update navigation buttons
     firstPageBtn.disabled = currentPage === 1;

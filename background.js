@@ -156,6 +156,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     sendResponse(sessions);
                     break;
                     
+                case 'getMeetingsAggregated':
+                    console.log('📥 Background: Getting aggregated meetings from storage for dashboard...');
+                    const aggregatedMeetings = await getAggregatedMeetings();
+                    console.log(`📤 Background: Sending ${aggregatedMeetings.length} aggregated meetings to dashboard`);
+                    sendResponse(aggregatedMeetings);
+                    break;
+                    
                 case 'getCurrentState':
                     sendResponse(currentMeetingState);
                     break;
@@ -198,6 +205,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                 case 'deleteMeeting':
                     const deleteResult = await deleteMeeting(request.meetingId);
                     sendResponse(deleteResult);
+                    break;
+                    
+                case 'deleteSession':
+                    const deleteSessionResult = await deleteSession(request.sessionId);
+                    sendResponse(deleteSessionResult);
                     break;
                     
                 default:
@@ -1055,6 +1067,43 @@ async function getSessions() {
     }
 }
 
+// Get aggregated meetings for dashboard display (combines sessions by meetingId)
+async function getAggregatedMeetings() {
+    try {
+        console.log('🔍 getAggregatedMeetings: Starting aggregation process...');
+        
+        const storage = await ensureStorageManager();
+        console.log('🔍 getAggregatedMeetings: Storage manager status:', !!storage);
+        
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, returning empty array');
+            return [];
+        }
+        
+        // Check if the function exists on storage manager
+        console.log('🔍 getAggregatedMeetings: Storage manager methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(storage)));
+        console.log('🔍 getAggregatedMeetings: Has getMeetingsAggregated?', typeof storage.getMeetingsAggregated === 'function');
+        
+        if (typeof storage.getMeetingsAggregated !== 'function') {
+            console.error('❌ getMeetingsAggregated method not found on storage manager');
+            return [];
+        }
+        
+        // Use the new aggregation function from storage manager
+        console.log('🔍 getAggregatedMeetings: Calling storage.getMeetingsAggregated()...');
+        const aggregatedMeetings = await storage.getMeetingsAggregated();
+        
+        console.log(`📊 Retrieved ${aggregatedMeetings.length} aggregated meetings for dashboard`);
+        console.log('🔍 getAggregatedMeetings: Sample of first meeting:', aggregatedMeetings[0]);
+        
+        return aggregatedMeetings;
+    } catch (error) {
+        console.error('❌ Error getting aggregated meetings from IndexedDB:', error);
+        console.error('❌ Error stack:', error.stack);
+        return [];
+    }
+}
+
 async function saveMeetings(meetings) {
     try {
         const storage = await ensureStorageManager();
@@ -1227,6 +1276,48 @@ async function deleteMeeting(meetingId) {
         
     } catch (error) {
         console.error('❌ Error deleting meeting:', error);
+        return { success: false, message: error.message };
+    }
+}
+
+// Delete individual session by ID
+async function deleteSession(sessionId) {
+    console.log(`🗑️ Deleting session: ${sessionId}`);
+    
+    try {
+        const storage = await ensureStorageManager();
+        if (!storage) {
+            console.warn('⚠️ Storage manager not available, cannot delete session');
+            return { success: false, message: 'Storage not available' };
+        }
+        
+        // First, check if this session exists in our active sessions
+        const activeSession = Object.values(activeSessions).find(session => session.sessionId === sessionId);
+        if (activeSession) {
+            console.log(`🔍 Found active session to delete: "${activeSession.title}" in meeting ${activeSession.meetingId}`);
+            
+            // Remove from active sessions tracking
+            delete activeSessions[sessionId];
+            if (meetingToSessionMap[activeSession.meetingId] === sessionId) {
+                delete meetingToSessionMap[activeSession.meetingId];
+            }
+            
+            console.log(`🧹 Removed session ${sessionId} from active session tracking`);
+        }
+        
+        // Delete the session from storage using IndexedDB storage manager
+        await storage.deleteSession(sessionId);
+        
+        console.log(`✅ Successfully deleted session: ${sessionId}`);
+        
+        return { 
+            success: true, 
+            message: `Successfully deleted session "${sessionId}"`,
+            deletedSessionId: sessionId
+        };
+        
+    } catch (error) {
+        console.error('❌ Error deleting session:', error);
         return { success: false, message: error.message };
     }
 }

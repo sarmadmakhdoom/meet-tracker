@@ -896,6 +896,121 @@ class MeetingStorageManager {
             transaction.onerror = () => reject(transaction.error);
         });
     }
+
+    // NEW: Get meetings aggregated by meetingId AND date (combines sessions for dashboard)
+    async getMeetingsAggregated(options = {}) {
+        try {
+            console.log('📊 getMeetingsAggregated called - providing meeting-centric view grouped by date');
+            
+            // Get all sessions first (similar to getMeetings)
+            const sessions = await this.getAllSessions(options);
+            
+            // Group sessions by meetingId AND date to separate recurring meetings
+            const meetingsMap = {};
+            
+            sessions.forEach(session => {
+                const sessionDate = new Date(session.startTime).toISOString().split('T')[0];
+                // Create composite key: meetingId + date
+                const compositeKey = `${session.meetingId}_${sessionDate}`;
+                
+                // Create meeting entry if it doesn't exist
+                if (!meetingsMap[compositeKey]) {
+                    meetingsMap[compositeKey] = {
+                        id: compositeKey,             // Use composite key as unique id
+                        meetingId: session.meetingId, // Keep original meetingId
+                        title: session.title || session.meetingId,
+                        url: session.url,
+                        startTime: session.startTime, // Will be updated to earliest time
+                        endTime: session.endTime,     // Will be updated to latest time
+                        duration: 0,                  // Will accumulate all sessions
+                        participants: [],             // Will combine unique participants
+                        sessions: [],                 // Will store all sessions
+                        isSession: false,             // Indicate this is an aggregated meeting
+                        isActive: session.endTime ? false : true,  // Active if any session is active
+                        sessionCount: 0,
+                        dataSource: session.dataSource || 'unknown',
+                        participantCount: 0,
+                        participantsMap: {},          // For tracking unique participants
+                        date: sessionDate
+                    };
+                }
+                
+                const meeting = meetingsMap[compositeKey];
+                
+                // Add session to meeting's sessions
+                meeting.sessions.push(session);
+                meeting.sessionCount++;
+                
+                // Calculate duration and update if session is ended
+                if (session.endTime) {
+                    const sessionDuration = session.endTime - session.startTime;
+                    meeting.duration += sessionDuration;
+                }
+                
+                // Update start time (earliest within the same day)
+                if (session.startTime < meeting.startTime) {
+                    meeting.startTime = session.startTime;
+                }
+                
+                // Update end time (latest within the same day)
+                if (session.endTime && (!meeting.endTime || session.endTime > meeting.endTime)) {
+                    meeting.endTime = session.endTime;
+                }
+                
+                // If any session is active, mark meeting as active
+                if (!session.endTime) {
+                    meeting.isActive = true;
+                    meeting.endTime = null; // Null out end time for active meetings
+                }
+                
+                // Add participants (unique within this day's meeting)
+                if (session.participants && Array.isArray(session.participants)) {
+                    session.participants.forEach(p => {
+                        // Handle different participant data formats
+                        let participantName = '';
+                        let participantId = '';
+                        
+                        if (typeof p === 'string') {
+                            participantName = p;
+                            participantId = p;  // Use name as ID
+                        } else if (p && typeof p === 'object') {
+                            participantName = p.name || p.displayName || p.id || 'Unknown';
+                            participantId = p.id || p.email || participantName;
+                        }
+                        
+                        // Only add if not already included in this day's meeting
+                        if (participantName && participantName !== 'Unknown' && !meeting.participantsMap[participantId]) {
+                            meeting.participantsMap[participantId] = true;
+                            meeting.participants.push(p); // Add original participant object
+                        }
+                    });
+                }
+            });
+            
+            // Convert map to array and finalize meeting objects
+            const aggregatedMeetings = Object.values(meetingsMap).map(meeting => {
+                // Calculate participant count from unique participants
+                meeting.participantCount = meeting.participants.length;
+                
+                // Calculate durationMinutes for convenience
+                meeting.durationMinutes = Math.round(meeting.duration / 60000);
+                
+                // Remove temporary tracking field
+                delete meeting.participantsMap;
+                
+                return meeting;
+            });
+            
+            // Sort by start time, newest first
+            aggregatedMeetings.sort((a, b) => b.startTime - a.startTime);
+            
+            console.log(`📊 Aggregated ${sessions.length} sessions into ${aggregatedMeetings.length} meetings (grouped by meetingId + date)`);
+            return aggregatedMeetings;
+        } catch (error) {
+            console.error('❌ Error in getMeetingsAggregated:', error);
+            return [];
+        }
+    }
 }
 
 // Export the storage manager
