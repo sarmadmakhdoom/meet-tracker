@@ -498,34 +498,49 @@ function renderChart(containerId, options) {
 }
 
 function renderDailyTimeChart() {
-    const dailyData = {};
+    // Group meetings by day of week (0 = Sunday, 1 = Monday, etc.)
+    const weeklyData = [0, 0, 0, 0, 0, 0, 0]; // Sun, Mon, Tue, Wed, Thu, Fri, Sat
+    const weeklyCount = [0, 0, 0, 0, 0, 0, 0]; // Count of days with data for averaging
+    
+    // Group meetings by date first, then by day of week
+    const dailyTotals = {};
     filteredMeetings.forEach(m => {
         const date = new Date(m.startTime).toISOString().split('T')[0];
-        dailyData[date] = (dailyData[date] || 0) + (m.endTime ? (m.endTime - m.startTime) / (1000 * 60 * 60) : 0); // hours
+        dailyTotals[date] = (dailyTotals[date] || 0) + (m.endTime ? (m.endTime - m.startTime) / (1000 * 60 * 60) : 0); // hours
     });
-
-    const sortedDates = Object.keys(dailyData).sort();
     
-    // Fill in missing dates with 0 values to create proper area chart
-    const filledData = {};
-    if (sortedDates.length > 0) {
-        const startDate = new Date(sortedDates[0]);
-        const endDate = new Date(sortedDates[sortedDates.length - 1]);
-        
-        for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-            const dateStr = d.toISOString().split('T')[0];
-            filledData[dateStr] = dailyData[dateStr] || 0;
-        }
-    }
+    // Now average by day of week
+    Object.entries(dailyTotals).forEach(([date, hours]) => {
+        const dayOfWeek = new Date(date).getDay();
+        weeklyData[dayOfWeek] += hours;
+        weeklyCount[dayOfWeek]++;
+    });
     
-    const allDates = Object.keys(filledData).sort();
-    const seriesData = allDates.map(date => ({
-        x: new Date(date).getTime(),
-        y: parseFloat(filledData[date].toFixed(2))
+    // Calculate averages (avoid division by zero)
+    const averagedWeeklyData = weeklyData.map((total, index) => 
+        weeklyCount[index] > 0 ? total / weeklyCount[index] : 0
+    );
+    
+    // Reorder to start with Monday (1) and end with Sunday (0)
+    const mondayFirstData = [
+        averagedWeeklyData[1], // Monday
+        averagedWeeklyData[2], // Tuesday  
+        averagedWeeklyData[3], // Wednesday
+        averagedWeeklyData[4], // Thursday
+        averagedWeeklyData[5], // Friday
+        averagedWeeklyData[6], // Saturday
+        averagedWeeklyData[0]  // Sunday
+    ];
+    
+    const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    
+    const seriesData = mondayFirstData.map((hours, index) => ({
+        x: weekdays[index],
+        y: parseFloat(hours.toFixed(2))
     }));
     
-    const goalData = allDates.map(date => ({
-        x: new Date(date).getTime(),
+    const goalData = weekdays.map(day => ({
+        x: day,
         y: a_hours_work_day
     }));
 
@@ -582,8 +597,11 @@ function renderDailyTimeChart() {
             enabled: false  // Hide data labels on chart points
         },
         xaxis: { 
-            type: 'datetime', 
-            labels: { format: 'MMM dd' }
+            type: 'category',
+            categories: weekdays,
+            labels: {
+                style: { colors: '#b8bcc3', fontSize: '12px' }
+            }
         },
         yaxis: { 
             title: { text: 'Hours', style: { color: '#9aa0a6' } },
@@ -593,7 +611,6 @@ function renderDailyTimeChart() {
         tooltip: {
             shared: true,
             intersect: false,
-            x: { format: 'dd MMM yyyy' },
             y: { formatter: (val) => `${val} hours` }
         },
         legend: { 
@@ -722,22 +739,29 @@ function renderCollaboratorsChart() {
         };
     });
 
+    // Calculate intimacy color for each collaborator based on their primary meeting type
+    const getIntimacyColor = (data) => {
+        const total = data.durationInHours;
+        const oneOnOnePercent = (data.oneOnOne.duration / (1000 * 60 * 60)) / total;
+        const smallGroupPercent = (data.smallGroup.duration / (1000 * 60 * 60)) / total;
+        const mediumGroupPercent = (data.mediumGroup.duration / (1000 * 60 * 60)) / total;
+        
+        // Determine primary meeting type by percentage
+        if (oneOnOnePercent >= 0.5) return '#4285f4'; // Blue for 1-on-1 heavy
+        if (oneOnOnePercent + smallGroupPercent >= 0.6) return '#34a853'; // Green for small group heavy  
+        if (mediumGroupPercent >= 0.4) return '#fbbc04'; // Yellow for medium group heavy
+        return '#ea4335'; // Red for large group heavy
+    };
+
     const options = {
         ...getCommonChartOptions(),
         series: [{
-            name: 'Time Spent',
-            data: chartData.map(c => ({
+            name: 'Time Spent (Hours)',
+            data: chartData.map((c, index) => ({
                 x: c.name,
                 y: parseFloat(c.durationInHours.toFixed(2)),
-                fillColor: c.color,
-                meetings: c.meetings,
-                totalDuration: c.duration,
-                qualityScore: c.qualityScore,
-                oneOnOne: c.oneOnOne,
-                smallGroup: c.smallGroup,
-                mediumGroup: c.mediumGroup,
-                largeGroup: c.largeGroup,
-                meetingDetails: c.meetingDetails
+                fillColor: c.color, // Use individual color for each person
+                collaboratorData: c
             }))
         }],
         chart: { 
@@ -755,10 +779,10 @@ function renderCollaboratorsChart() {
             bar: {
                 horizontal: true,
                 borderRadius: 4,
+                distributed: true, // This enables different colors for each bar
                 dataLabels: {
                     position: 'top'
-                },
-                distributed: true  // This enables different colors for each bar
+                }
             }
         },
         colors: chartData.map(c => c.color),
@@ -768,22 +792,23 @@ function renderCollaboratorsChart() {
             style: {
                 fontSize: '11px',
                 colors: ['#e8eaed'],
-                fontWeight: 'normal'
+                fontWeight: 'bold'
             },
             formatter: function(val, opts) {
                 const dataIndex = opts.dataPointIndex;
                 const data = chartData[dataIndex];
-                const formattedDuration = formatDuration(data.duration);
-                return `${data.meetings} meetings • ${formattedDuration}`;
+                return `${data.meetings} meetings • ${formatDuration(data.duration)}`;
             }
         },
         xaxis: {
+            type: 'category',
             categories: chartData.map(c => c.name),
             labels: {
                 style: {
                     colors: '#b8bcc3',
                     fontSize: '11px'
-                }
+                },
+                formatter: (val) => `${val}h`
             },
             title: {
                 text: 'Time Spent (Hours) - Click bars for details',
