@@ -819,7 +819,7 @@ class SimpleMeetTracker {
       'turn off captions', 'turn on captions', 'joined', 'left', 'disconnected',
       'reconnected', 'presenting', 'stopped presenting', 'entered', 'exited',
       'connected', 'meeting host', 'host', 'guest', 'visitor', 'organizer',
-      'draw', 'drawing', 'annotation', 'annotate', 'pen', 'marker', 'highlighter'
+      'draw', 'drawing', 'annotation', 'annotate', 'pen', 'marker', 'highlighter', 'keep'
     ];
     
     if (invalidNames.includes(name.toLowerCase())) {
